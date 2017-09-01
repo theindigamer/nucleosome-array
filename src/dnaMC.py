@@ -21,19 +21,26 @@ class nakedDNA( object ):
 
     def rotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
-        phi = self.euler[...,0]
-        theta = self.euler[...,1]
-        psi = self.euler[...,2]
+        phi = self.euler[:, 0]
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        theta = self.euler[:, 1]
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        psi = self.euler[:, 2]
+        cos_psi = np.cos(psi)
+        sin_psi = np.sin(psi)
+
         R = np.zeros(( self.L, 3, 3 ))
-        R[..., 0, 0] = np.cos(phi) * np.cos(psi) - np.cos(theta) * np.sin(phi) * np.sin(psi)
-        R[..., 1, 0] = -np.cos(psi) * np.sin(phi) - np.cos(theta) * np.cos(phi) * np.sin(psi)
-        R[..., 2, 0] = np.sin(theta) * np.sin(psi)
-        R[..., 0, 1] = np.cos(phi) * np.sin(psi) + np.cos(theta) * np.cos(psi) * np.sin(phi)
-        R[..., 1, 1] = -np.sin(phi) * np.sin(psi) + np.cos(theta) * np.cos(phi) * np.cos(psi)
-        R[..., 2, 1] = -np.cos(psi) * np.sin(theta)
-        R[..., 0, 2] = np.sin(theta) * np.sin(phi)
-        R[..., 1, 2] = np.cos(phi) * np.sin(theta)
-        R[..., 2, 2] = np.cos(theta)
+        R[:, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
+        R[:, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
+        R[:, 2, 0] = sin_theta * sin_psi
+        R[:, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
+        R[:, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
+        R[:, 2, 1] = -cos_psi * sin_theta
+        R[:, 0, 2] = sin_theta * sin_phi
+        R[:, 1, 2] = cos_phi * sin_theta
+        R[:, 2, 2] = cos_theta
         return R
 
     def deltaMatrices( self, Rs=None ):
@@ -65,9 +72,9 @@ class nakedDNA( object ):
             angles = self.twistBendAngles( squared=squared )
 
         if squared:
-            return self.B * angles[0] / (2.*self.d)
+            return self.B * angles[0] / (2.0*self.d)
         else:
-            return self.B * ( angles[0]**2 + angles[1]**2 ) / (2.*self.d)
+            return self.B * ( angles[0]**2 + angles[1]**2 ) / (2.0*self.d)
 
     def bendingEnergy( self, squared=True, bendEnergyDensity=None ):
         """ Returns the total bending energy."""
@@ -113,9 +120,9 @@ class nakedDNA( object ):
     def totalEnergyDensity( self, squared=True, force=1.96 ):
         """ Returns the total energy density."""
         E = self.bendingEnergyDensity( squared=squared )
-        E += self.twistEnergyDensity( squared=squared ) 
+        E += self.twistEnergyDensity( squared=squared )
         E += self.stretchEnergyDensity( force=force )
-        return E 
+        return E
 
     def totalEnergy( self, squared=True, force=1.96, totalEnergyDensity=None ):
         """ Returns the total energy. """
@@ -125,18 +132,18 @@ class nakedDNA( object ):
 
     def tVector( self ):
         """ Returns the tangent vectors. """
-        ( phi, theta ) = ( self.euler[...,0], self.euler[...,1] )
+        ( phi, theta ) = ( self.euler[:,0], self.euler[:,1] )
         t = np.zeros(( self.L, 3 ))
-        t[..., 0] = np.sin(theta) * np.sin(phi)
-        t[..., 1] = np.cos(phi) * np.sin(theta)
-        t[..., 2] = np.cos(theta)        
+        t[:, 0] = np.sin(theta) * np.sin(phi)
+        t[:, 1] = np.cos(phi) * np.sin(theta)
+        t[:, 2] = np.cos(theta)
         return t
 
     def rVector( self, t=None ):
         """ Returns the end points of the t-vectors."""
         if t==None:
             t = self.tVector()
-        return np.cumsum( t, axis=0 ) 
+        return np.cumsum( t, axis=0 )
 
 def metropolisUpdate( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None ):
     """ Update dnaClass Euler angles using Metropolis algorithm.
@@ -144,33 +151,33 @@ def metropolisUpdate( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None ):
     if E0==None:
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
 
-    moves = sigma * np.random.randn( dnaClass.L-2, 3 )
+    moves = np.random.normal(loc=0.0, scale=sigma, size=(dnaClass.L - 2, 3))
     moves *= ( np.abs(moves) < 5.0*sigma )
 
     for i in xrange(3):
-        dnaClass.euler[1:-1, i] += moves[..., i] * dnaClass.oddMask
+        dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.oddMask
         Ef = dnaClass.totalEnergyDensity( squared=squared, force=force )
         deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
         reject = 1.0 * dnaClass.oddMask
-        reject *= deltaE > 0
+        reject[deltaE <= 0] = 0
         #reject *= np.random.rand( dnaClass.L - 2 ) > np.exp( - deltaE )
 
-        dnaClass.euler[1:-1,i] -= moves[..., i] * reject
+        dnaClass.euler[1:-1,i] -= moves[:, i] * reject
 
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
-        
-        dnaClass.euler[1:-1, i] += moves[..., i] * dnaClass.evenMask
+
+        dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.evenMask
 
         Ef = dnaClass.totalEnergyDensity( squared=squared, force=force )
         deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
         reject = 1.0 * dnaClass.evenMask
-        reject *= deltaE > 0
+        reject[deltaE <= 0] = 0
         #reject *= np.random.rand( dnaClass.L - 2 ) > np.exp( - deltaE )
 
-        dnaClass.euler[1:-1,i] -= moves[..., i] * reject
-        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )   
+        dnaClass.euler[1:-1,i] -= moves[:, i] * reject
+        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
     return E0
 
 def mcRelaxation( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100 ):
@@ -189,11 +196,10 @@ def mcRelaxation( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcStep
 def torsionProtocol( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100,
             twists=np.arange( np.pi/2.0 , 30.0 * np.pi, np.pi/2.0 ) ):
     """ Simulate a torsion protocol defined by twists. """
-    energyList, extensionList = [], [] 
+    energyList, extensionList = [], []
     for x in twists:
         dnaClass.euler[-1, 2] = x
         energy, extension= mcRelaxation( dnaClass, sigma, squared, force, E0, mcSteps )
         energyList.append( energy[-1] )
         extensionList.append( extension[-1] )
     return energyList, extensionList
-
