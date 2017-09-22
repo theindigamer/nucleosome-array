@@ -5,6 +5,23 @@ import matplotlib.pylab as plt
 import pickle
 import os
 import copy
+import time
+
+ntimers = 10
+timers = np.zeros(ntimers)
+timer_descr = {
+    0 : "Half of inner loop in metropolisUpdate",
+    1 : "Half of half of inner loop in metropolisUpdate",
+    2 : "Calls to bendingEnergyDensity",
+    3 : "Calls to twistEnergyDensity",
+    4 : "Calculating Rs in deltaMatrices via rotationMatrices",
+    5 : "Calculating a in deltaMatrices",
+    6 : "Calculating b in deltaMatrices",
+    7 : "Calculating deltas in deltaMatrices",
+    8 : "Total time",
+}
+
+dot_ufunc = np.frompyfunc(np.dot, 2, 1)
 
 class nakedDNA( object ):
     """ Creates the naked DNA class.
@@ -16,8 +33,8 @@ class nakedDNA( object ):
         self.C = C
         self.d = d
         self.euler = np.zeros(( self.L, 3))
-        self.oddMask = np.array([ i & 0x1 for i in xrange( self.L -2 ) ], dtype=bool)
-        self.evenMask = np.roll( self.oddMask, 1 )
+        self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
+        self.evenMask = np.roll(self.oddMask, 1)
 
     def rotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
@@ -45,47 +62,67 @@ class nakedDNA( object ):
 
     def deltaMatrices( self, Rs=None ):
         """ Returns delta matrices. """
-        if Rs==None:
-            Rs = self.rotationMatrices()
-        a = np.swapaxes( Rs[:-1], 1, 2 )
-        b = Rs[1:]
-        return np.array([ np.dot(a[i], b[i]) for i in xrange(len(a)) ])
+        start = time.clock()
 
-    def twistBendAngles( self, Ds=None, squared=True ):
+        if Rs is None:
+            Rs = self.rotationMatrices()
+
+        timers[4] += time.clock() - start
+        start = time.clock()
+
+        a = np.swapaxes( Rs[:-1], 1, 2 )
+
+        timers[5] += time.clock() - start
+        start = time.clock()
+
+        b = Rs[1:]
+
+        timers[6] += time.clock() - start
+        start = time.clock()
+
+        deltas = np.array([ np.dot(a[i], b[i]) for i in range(len(a)) ])
+
+        timers[7] += time.clock() - start
+
+        return deltas
+
+    def twistBendAngles(self, Ds=None, squared=True):
         """ Returns the twist and bending angles."""
-        if Ds==None:
+        if Ds is None:
             Ds = self.deltaMatrices()
         if squared:
-            betaSq = 2.0 * ( 1 - Ds[...,2,2] )
-            GammaSq = 1.0 - Ds[...,0,0] - Ds[...,1,1] + Ds[...,2,2]
+            betaSq = 2.0 * (1 - Ds[:, 2, 2])
+            GammaSq = 1.0 - Ds[:, 0, 0] - Ds[:, 1, 1] + Ds[:, 2, 2]
             return betaSq, GammaSq
         else:
-            beta1 = ( Ds[...,1,2] - Ds[...,2,1] ) / 2.0
-            beta2 = ( Ds[...,2,0] - Ds[...,0,2] ) / 2.0
-            Gamma = ( Ds[...,0,1] - Ds[...,1,0] ) / 2.0
+            beta1 = (Ds[:, 1, 2] - Ds[:, 2, 1]) / 2.0
+            beta2 = (Ds[:, 2, 0] - Ds[:, 0, 2]) / 2.0
+            Gamma = (Ds[:, 0, 1] - Ds[:, 1, 0]) / 2.0
             return beta1, beta2, Gamma
 
     def bendingEnergyDensity( self, angles=None, squared=True ):
         """ Returns the bending energy density.
             Enter angles in a tuple( arrays ) format."""
-        if angles==None:
+        if angles is None:
             angles = self.twistBendAngles( squared=squared )
 
         if squared:
-            return self.B * angles[0] / (2.0*self.d)
+            energy_density = self.B * angles[0] / (2.0*self.d)
         else:
-            return self.B * ( angles[0]**2 + angles[1]**2 ) / (2.0*self.d)
+            energy_density = self.B * ( angles[0]**2 + angles[1]**2 ) / (2.0*self.d)
+
+        return energy_density, angles
 
     def bendingEnergy( self, squared=True, bendEnergyDensity=None ):
         """ Returns the total bending energy."""
-        if bendEnergyDensity==None:
-            bendEnergyDensity = self.bendingEnergyDensity( squared=squared )
+        if bendEnergyDensity is None:
+            bendEnergyDensity, _ = self.bendingEnergyDensity( squared=squared )
 
         return np.sum( bendEnergyDensity )
 
     def twistEnergyDensity( self, angles=None, squared=True ):
         """ Returns the twist energy density."""
-        if angles==None:
+        if angles is None:
             angles = self.twistBendAngles( squared=squared )
         if squared:
             return self.C * angles[-1] / (2.*self.d)
@@ -94,7 +131,7 @@ class nakedDNA( object ):
 
     def twistEnergy( self, squared=True, twistEnergyDensity=None ):
         """ Returns the total twist energy. """
-        if twistEnergyDensity==None:
+        if twistEnergyDensity is None:
             twistEnergyDensity = self.twistEnergyDensity( squared=squared )
 
         return np.sum( twistEnergyDensity )
@@ -107,26 +144,35 @@ class nakedDNA( object ):
             prefactor = 10E-12 10-9/ (1.38E-23 296.65).
             Change prefactor to change the temperature."""
         prefactor = 0.24
-        if tangent==None:
+        if tangent is None:
             tangent = self.tVector()
         return -force * prefactor * tangent[:-1,2]
 
     def stretchEnergy( self, force=1.96, stretchEnergyDensity=None ):
         """ Returns the total stretching energy. """
-        if stretchEnergyDensity==None:
+        if stretchEnergyDensity is None:
             stretchEnergyDensity = self.stretchEnergyDensity( force=force )
         return np.sum( stretchEnergyDensity )
 
     def totalEnergyDensity( self, squared=True, force=1.96 ):
         """ Returns the total energy density."""
-        E = self.bendingEnergyDensity( squared=squared )
-        E += self.twistEnergyDensity( squared=squared )
+        start = time.clock()
+
+        E, angles = self.bendingEnergyDensity( squared=squared )
+
+        timers[2] += time.clock() - start
+        start = time.clock()
+
+        E += self.twistEnergyDensity(squared=squared, angles=angles)
+
+        timers[3] += time.clock() - start
+
         E += self.stretchEnergyDensity( force=force )
         return E
 
     def totalEnergy( self, squared=True, force=1.96, totalEnergyDensity=None ):
         """ Returns the total energy. """
-        if totalEnergyDensity==None:
+        if totalEnergyDensity is None:
             totalEnergyDensity=self.totalEnergyDensity( squared=squared, force=force )
         return np.sum( totalEnergyDensity )
 
@@ -141,31 +187,35 @@ class nakedDNA( object ):
 
     def rVector( self, t=None ):
         """ Returns the end points of the t-vectors."""
-        if t==None:
+        if t is None:
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
 def metropolisUpdate( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None ):
     """ Update dnaClass Euler angles using Metropolis algorithm.
         Return the total energy density. """
-    if E0==None:
+    if E0 is None:
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
 
     moves = np.random.normal(loc=0.0, scale=sigma, size=(dnaClass.L - 2, 3))
-    moves *= ( np.abs(moves) < 5.0*sigma )
+    moves[np.abs(moves) >= 5.0*sigma] = 0
 
-    for i in xrange(3):
+    for i in range(3):
+        start = time.clock()
+
         dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.oddMask
         Ef = dnaClass.totalEnergyDensity( squared=squared, force=force )
         deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
+        timers[1] += time.clock() - start
+
         reject = 1.0 * dnaClass.oddMask
         reject[deltaE <= 0] = 0
-        #reject *= np.random.rand( dnaClass.L - 2 ) > np.exp( - deltaE )
 
         dnaClass.euler[1:-1,i] -= moves[:, i] * reject
-
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
+
+        timers[0] += time.clock() - start
 
         dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.evenMask
 
@@ -174,20 +224,20 @@ def metropolisUpdate( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None ):
 
         reject = 1.0 * dnaClass.evenMask
         reject[deltaE <= 0] = 0
-        #reject *= np.random.rand( dnaClass.L - 2 ) > np.exp( - deltaE )
 
         dnaClass.euler[1:-1,i] -= moves[:, i] * reject
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
+
     return E0
 
 def mcRelaxation( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100 ):
     """ Monte Carlo relaxation using Metropolis algorithm. """
     energyList = []
     xList = []
-    if E0==None:
+    if E0 is None:
         E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
     energyList.append( np.sum( E0 ) )
-    for i in xrange(mcSteps):
+    for i in range(mcSteps):
         E0 = metropolisUpdate( dnaClass, sigma, squared, force, E0 )
         energyList.append( np.sum(E0) )
         xList.append( np.sum( dnaClass.tVector()[:,2] ) )
@@ -196,10 +246,18 @@ def mcRelaxation( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcStep
 def torsionProtocol( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100,
             twists=np.arange( np.pi/2.0 , 30.0 * np.pi, np.pi/2.0 ) ):
     """ Simulate a torsion protocol defined by twists. """
+    start = time.clock()
+
     energyList, extensionList = [], []
     for x in twists:
         dnaClass.euler[-1, 2] = x
         energy, extension= mcRelaxation( dnaClass, sigma, squared, force, E0, mcSteps )
         energyList.append( energy[-1] )
         extensionList.append( extension[-1] )
-    return energyList, extensionList
+
+    global timers
+    timers[8] += time.clock() - start
+    timings = {s : timers[i] for (i, s) in timer_descr.items()}
+    timers = np.zeros(ntimers)
+
+    return energyList, extensionList, timings
