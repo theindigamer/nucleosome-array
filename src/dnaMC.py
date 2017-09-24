@@ -191,73 +191,107 @@ class nakedDNA( object ):
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
-def metropolisUpdate( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None ):
-    """ Update dnaClass Euler angles using Metropolis algorithm.
-        Return the total energy density. """
-    if E0 is None:
-        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
+    def metropolisUpdate(self, sigma=0.1, squared=True, force=1.96, E0=None):
+        """ Updates dnaClass Euler angles using Metropolis algorithm.
+        Returns the total energy density. """
+        if E0 is None:
+            E0 = self.totalEnergyDensity( squared=squared, force=force )
 
-    moves = np.random.normal(loc=0.0, scale=sigma, size=(dnaClass.L - 2, 3))
-    moves[np.abs(moves) >= 5.0*sigma] = 0
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves[np.abs(moves) >= 5.0*sigma] = 0
 
-    for i in range(3):
+        for i in range(3):
+            start = time.clock()
+
+            self.euler[1:-1, i] += moves[:, i] * self.oddMask
+            Ef = self.totalEnergyDensity( squared=squared, force=force )
+            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+
+            timers[1] += time.clock() - start
+
+            reject = 1.0 * self.oddMask
+            reject[deltaE <= 0] = 0
+
+            self.euler[1:-1,i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity( squared=squared, force=force )
+
+            timers[0] += time.clock() - start
+
+            self.euler[1:-1, i] += moves[:, i] * self.evenMask
+
+            Ef = self.totalEnergyDensity( squared=squared, force=force )
+            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+
+            reject = 1.0 * self.evenMask
+            reject[deltaE <= 0] = 0
+
+            self.euler[1:-1,i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity( squared=squared, force=force )
+
+        return E0
+
+    def mcRelaxation(self, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100):
+        """ Monte Carlo relaxation using Metropolis algorithm. """
+        energyList = []
+        xList = []
+        if E0 is None:
+            E0 = self.totalEnergyDensity( squared=squared, force=force )
+        energyList.append( np.sum( E0 ) )
+        for i in range(mcSteps):
+            E0 = self.metropolisUpdate(sigma, squared, force, E0 )
+            energyList.append( np.sum(E0) )
+            xList.append( np.sum( self.tVector()[:,2] ) )
+        return np.array( energyList ), np.array( xList )
+
+    def torsionProtocol(self, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100,
+                twists=np.arange( np.pi/2.0 , 30.0 * np.pi, np.pi/2.0 ) ):
+        """ Simulate a torsion protocol defined by twists. """
         start = time.clock()
 
-        dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.oddMask
-        Ef = dnaClass.totalEnergyDensity( squared=squared, force=force )
-        deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+        energyList, extensionList = [], []
+        for x in twists:
+            self.euler[-1, 2] = x
+            energy, extension = self.mcRelaxation(sigma, squared, force, E0, mcSteps )
+            energyList.append( energy[-1] )
+            extensionList.append( extension[-1] )
 
-        timers[1] += time.clock() - start
+        global timers
+        timers[8] += time.clock() - start
+        timings = {s : timers[i] for (i, s) in timer_descr.items()}
+        timers = np.zeros(ntimers)
 
-        reject = 1.0 * dnaClass.oddMask
-        reject[deltaE <= 0] = 0
+        return {
+            "energy" : energyList,
+            "extension" : extensionList,
+            "timing" : timings
+        }
 
-        dnaClass.euler[1:-1,i] -= moves[:, i] * reject
-        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
+    def relaxationProtocol(self, sigma=0.1, squared=True, force=1.96, E0=None,
+                           mcSteps=1000, nsamples=4):
+        """
+        Simulate a relaxation for an initial twist profile.
 
-        timers[0] += time.clock() - start
+        The DNA should be specified with the required profile already applied.
+        """
+        start = time.clock()
 
-        dnaClass.euler[1:-1, i] += moves[:, i] * dnaClass.evenMask
+        angles = []
 
-        Ef = dnaClass.totalEnergyDensity( squared=squared, force=force )
-        deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= 10 else []
+        if not mcSteps % nsamples == 0:
+            nsteps.append(mcSteps % nsamples)
 
-        reject = 1.0 * dnaClass.evenMask
-        reject[deltaE <= 0] = 0
+        for nstep in nsteps:
+            _, _ = self.mcRelaxation(sigma, squared, force, E0, nstep)
+            angles.append(copy.deepcopy(self.euler))
 
-        dnaClass.euler[1:-1,i] -= moves[:, i] * reject
-        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
+        global timers
+        timers[8] += time.clock() - start
+        timings = {s : timers[i] for (i, s) in timer_descr.items()}
+        timers = np.zeros(ntimers)
 
-    return E0
-
-def mcRelaxation( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100 ):
-    """ Monte Carlo relaxation using Metropolis algorithm. """
-    energyList = []
-    xList = []
-    if E0 is None:
-        E0 = dnaClass.totalEnergyDensity( squared=squared, force=force )
-    energyList.append( np.sum( E0 ) )
-    for i in range(mcSteps):
-        E0 = metropolisUpdate( dnaClass, sigma, squared, force, E0 )
-        energyList.append( np.sum(E0) )
-        xList.append( np.sum( dnaClass.tVector()[:,2] ) )
-    return np.array( energyList ), np.array( xList )
-
-def torsionProtocol( dnaClass, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100,
-            twists=np.arange( np.pi/2.0 , 30.0 * np.pi, np.pi/2.0 ) ):
-    """ Simulate a torsion protocol defined by twists. """
-    start = time.clock()
-
-    energyList, extensionList = [], []
-    for x in twists:
-        dnaClass.euler[-1, 2] = x
-        energy, extension= mcRelaxation( dnaClass, sigma, squared, force, E0, mcSteps )
-        energyList.append( energy[-1] )
-        extensionList.append( extension[-1] )
-
-    global timers
-    timers[8] += time.clock() - start
-    timings = {s : timers[i] for (i, s) in timer_descr.items()}
-    timers = np.zeros(ntimers)
-
-    return energyList, extensionList, timings
+        return {
+            "angles" : np.array(angles),
+            "tsteps" : np.cumsum(nsteps),
+            "timing" : timings
+        }
