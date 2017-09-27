@@ -1,12 +1,35 @@
 import dnaMC
+
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy import log10, sqrt
-import matplotlib.pyplot as plt
 import scipy
 from scipy.optimize import curve_fit
+
+import json
+import pickle
+
+import copy
 import pprint
 
-def test(n=256, L=32, mcSteps=20, step_size=np.pi/32):
+def toListlike(results):
+    tmp = copy.deepcopy(results)
+    tmp["angles"] = tmp["angles"].tolist()
+    tmp["tsteps"] = tmp["tsteps"].tolist()
+    return tmp
+
+def savedata(results, fname):
+    tmp = toListlike(results)
+    if fname.endswith(".pckl"):
+        with open(fname, "wb") as f:
+            pickle.dump(tmp, f)
+    elif fname.endswith(".json"):
+        with open(fname, "w") as f:
+            json.dump(tmp, f)
+    else:
+        print("Unrecognized file extension. Use .json or .pckl.")
+
+def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
     """Twisting a DNA from one end.
 
     Returns a DNA object in the twisted form and a dictionary containing
@@ -14,7 +37,7 @@ def test(n=256, L=32, mcSteps=20, step_size=np.pi/32):
     """
     dna = dnaMC.nakedDNA(L=L)
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
-                                  mcSteps=mcSteps)
+                                 mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def testDeltafn(L=32, height=np.pi/4, mcSteps=100, nsamples=4):

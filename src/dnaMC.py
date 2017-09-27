@@ -23,15 +23,15 @@ timer_descr = {
 
 dot_ufunc = np.frompyfunc(np.dot, 2, 1)
 
-class nakedDNA( object ):
+class nakedDNA:
     """ Creates the naked DNA class.
         Euler angles are ordered as phi, theta and psi.
         Euler angle parametrization... """
-    def __init__(self, L=740, B=43.0, C=89.0, d=1.0):
+    def __init__(self, L=740, B=43.0, C=89.0):
         self.L = L
-        self.B = B
-        self.C = C
-        self.d = d
+        self.B = B # in nm kT
+        self.C = C # in nm kT
+        self.d = d*740/L # to ensure that total length is 740 nm
         self.euler = np.zeros(( self.L, 3))
         self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
         self.evenMask = np.roll(self.oddMask, 1)
@@ -244,16 +244,25 @@ class nakedDNA( object ):
         return np.array( energyList ), np.array( xList )
 
     def torsionProtocol(self, sigma=0.1, squared=True, force=1.96, E0=None, mcSteps=100,
-                twists=np.arange( np.pi/2.0 , 30.0 * np.pi, np.pi/2.0 ) ):
+                        twists=np.arange(np.pi/2, 30*np.pi, np.pi/2), nsamples=1):
         """ Simulate a torsion protocol defined by twists. """
         start = time.clock()
 
-        energyList, extensionList = [], []
+        energyList = []
+        extensionList = []
+        angles = []
+
+        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
+        if mcSteps % nsamples != 0:
+            nsteps.append(mcSteps % nsamples)
+
         for x in twists:
-            self.euler[-1, 2] = x
-            energy, extension = self.mcRelaxation(sigma, squared, force, E0, mcSteps )
-            energyList.append( energy[-1] )
-            extensionList.append( extension[-1] )
+            for nstep in nsteps:
+                self.euler[-1, 2] = x
+                energy, extension = self.mcRelaxation(sigma, squared, force, E0, nstep)
+                energyList.append( energy[-1] )
+                extensionList.append( extension[-1] )
+                angles.append(copy.deepcopy(self.euler))
 
         global timers
         timers[8] += time.clock() - start
@@ -263,7 +272,9 @@ class nakedDNA( object ):
         return {
             "energy" : energyList,
             "extension" : extensionList,
-            "timing" : timings
+            "timing" : timings,
+            "angles" : np.array(angles),
+            "tsteps" : np.cumsum(nsteps * len(twists))
         }
 
     def relaxationProtocol(self, sigma=0.1, squared=True, force=1.96, E0=None,
@@ -276,9 +287,8 @@ class nakedDNA( object ):
         start = time.clock()
 
         angles = []
-
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= 10 else []
-        if not mcSteps % nsamples == 0:
+        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
+        if mcSteps % nsamples != 0:
             nsteps.append(mcSteps % nsamples)
 
         for nstep in nsteps:
