@@ -3,3 +3,8 @@ src/*.pyc
 src/*.json
 src/*.pckl
 src/*.nb
+*.png
+*.ipynb
+*.npy
+*.pdf
+*.swp
