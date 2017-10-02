@@ -1,2 +1,5 @@
 src/__pycache__
 src/*.pyc
+src/*.json
+src/*.pckl
+src/*.nb
