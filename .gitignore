@@ -1,2 +1,7 @@
 src/__pycache__
 src/*.pyc
+*.png
+*.ipynb
+*.npy
+*.pdf
+*.swp

@@ -215,54 +215,57 @@ class angular( object ):
 
     def rotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
-        phi = self.euler[...,0]
-        theta = self.euler[...,1]
-        psi = self.euler[...,2]
+        sinPhi = np.sin( self.euler[..., 0])
+        cosPhi = np.cos( self.euler[..., 0])
+        sinTheta = np.sin( self.euler[..., 1] )
+        cosTheta = np.cos( self.euler[..., 1] )
+        sinPsi = np.sin( self.euler[..., 2] )
+        cosPsi = np.cos( self.euler[..., 2])
+
         R = np.zeros(( self.L, 3, 3 ))
-        R[..., 0, 0] = np.cos(phi) * np.cos(psi) - np.cos(theta) * np.sin(phi) * np.sin(psi)
-        R[..., 1, 0] = -np.cos(psi) * np.sin(phi) - np.cos(theta) * np.cos(phi) * np.sin(psi)
-        R[..., 2, 0] = np.sin(theta) * np.sin(psi)
-        R[..., 0, 1] = np.cos(phi) * np.sin(psi) + np.cos(theta) * np.cos(psi) * np.sin(phi)
-        R[..., 1, 1] = -np.sin(phi) * np.sin(psi) + np.cos(theta) * np.cos(phi) * np.cos(psi)
-        R[..., 2, 1] = -np.cos(psi) * np.sin(theta)
-        R[..., 0, 2] = np.sin(theta) * np.sin(phi)
-        R[..., 1, 2] = np.cos(phi) * np.sin(theta)
-        R[..., 2, 2] = np.cos(theta)
+        R[..., 0, 0] = cosPhi * cosPsi - cosTheta * sinPhi * sinPsi
+        R[..., 1, 0] = -cosPsi * sinPhi - cosTheta * cosPhi * sinPsi
+        R[..., 2, 0] = sinTheta * sinPsi
+        R[..., 0, 1] = cosPhi * sinPsi + cosTheta * cosPsi * sinPhi
+        R[..., 1, 1] = -sinPhi * sinPsi + cosTheta * cosPhi * cosPsi
+        R[..., 2, 1] = -cosPsi * sinTheta
+        R[..., 0, 2] = sinTheta * sinPhi
+        R[..., 1, 2] = cosPhi * sinTheta
+        R[..., 2, 2] = cosTheta
+
         return R
 
     def derivativeRotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
-        phi = self.euler[...,0]
-        theta = self.euler[...,1]
-        psi = self.euler[...,2]
+        sinPhi = np.sin( self.euler[..., 0])
+        cosPhi = np.cos( self.euler[..., 0])
+        sinTheta = np.sin( self.euler[..., 1] )
+        cosTheta = np.cos( self.euler[..., 1] )
+        sinPsi = np.sin( self.euler[..., 2] )
+        cosPsi = np.cos( self.euler[..., 2])
+
         DR = np.zeros(( self.L, 3, 3, 3 ))
-        DR[..., 0, 0, 0] = -np.sin(phi) * np.cos(psi) - np.cos(phi) * np.cos(theta) * np.sin(psi) 
-        DR[..., 1, 0, 0] = -np.cos(phi) * np.cos(psi) + np.sin(phi) * np.cos(theta) * np.sin(psi)
-#        DR[..., 2, 0, 0] = 0.0
-        DR[..., 0, 1, 0] = np.cos(phi) * np.cos(theta) * np.cos(psi) - np.sin(phi) * np.sin(psi)
-        DR[..., 1, 1, 0] = -np.sin(phi) * np.cos(theta) * np.cos(psi) - np.cos(phi) * np.sin(psi)
-#        DR[..., 2, 1, 0] = 0.0
-        DR[..., 0, 2, 0] = np.cos(phi) * np.sin(theta)
-        DR[..., 1, 2, 0] = -np.sin(phi) * np.sin(theta)
-#        DR[..., 2, 2, 0] = 0.0
-        DR[..., 0, 0, 1] = np.sin(phi) * np.sin(theta) * np.sin(psi)
-        DR[..., 1, 0, 1] = np.cos(phi) * np.sin(theta) * np.sin(psi)
-        DR[..., 2, 0, 1] = np.cos(theta) * np.sin(psi)
-        DR[..., 0, 1, 1] = -np.sin(phi) * np.sin(theta) * np.cos(psi)
-        DR[..., 1, 1, 1] = -np.cos(phi) * np.sin(theta) * np.cos(psi)
-        DR[..., 2, 1, 1] = -np.cos(theta) * np.cos(psi)
-        DR[..., 0, 2, 1] = np.sin(phi) * np.cos(theta)
-        DR[..., 1, 2, 1] = np.cos(phi) * np.cos(theta)
-        DR[..., 2, 2, 1] = -np.sin(theta)
-        DR[..., 0, 0, 2] = -np.sin(phi) * np.cos(theta) * np.cos(psi) - np.cos(phi) * np.sin(psi) 
-        DR[..., 1, 0, 2] = -np.cos(phi) * np.cos(theta) * np.cos(psi) + np.sin(phi) * np.sin(psi)
-        DR[..., 2, 0, 2] = np.sin(theta) * np.cos(psi)
-        DR[..., 0, 1, 2] = np.cos(phi) * np.cos(psi) - np.sin(phi) * np.cos(theta) * np.sin(psi)
-        DR[..., 1, 1, 2] = -np.sin(phi) * np.cos(psi) - np.cos(phi) * np.cos(theta) * np.sin(psi)
-        DR[..., 2, 1, 2] = np.sin(theta) * np.sin(psi)
-#        DR[..., 0, 2, 2] = 0.0
-#        DR[..., 1, 2, 2] = 0.0
-#        DR[..., 2, 2, 2] = 0.0
+        DR[..., 0, 0, 0] = -sinPhi * cosPsi - cosPhi * cosTheta *sinPsi
+        DR[..., 1, 0, 0] = -cosPhi * cosPsi + sinPhi * cosTheta * sinPsi
+        DR[..., 0, 1, 0] = cosPhi * cosTheta * cosPsi - sinPhi * sinPsi
+        DR[..., 1, 1, 0] = -sinPhi * cosTheta * cosPsi - cosPhi * sinPsi
+        DR[..., 0, 2, 0] = cosPhi * sinTheta
+        DR[..., 1, 2, 0] = -sinPhi * sinTheta
+        DR[..., 0, 0, 1] = sinPhi * sinTheta * sinPsi
+        DR[..., 1, 0, 1] = cosPhi * sinTheta * sinPsi
+        DR[..., 2, 0, 1] = cosTheta * sinPsi
+        DR[..., 0, 1, 1] = -sinPhi * sinTheta * cosPsi
+        DR[..., 1, 1, 1] = -cosPhi * sinTheta * cosPsi
+        DR[..., 2, 1, 1] = -cosTheta * cosPsi
+        DR[..., 0, 2, 1] = sinPhi * cosTheta
+        DR[..., 1, 2, 1] = cosPhi * cosTheta
+        DR[..., 2, 2, 1] = -sinTheta
+        DR[..., 0, 0, 2] = -sinPhi * cosTheta * cosPsi - cosPhi * sinPsi
+        DR[..., 1, 0, 2] = -cosPhi * cosTheta * cosPsi + sinPhi * sinPsi
+        DR[..., 2, 0, 2] = sinTheta * cosPsi
+        DR[..., 0, 1, 2] = cosPhi * cosPsi - sinPhi * cosTheta * sinPsi
+        DR[..., 1, 1, 2] = -sinPhi * cosPsi - cosPhi * cosTheta * sinPsi
+        DR[..., 2, 1, 2] = sinTheta * sinPsi
         return DR
 
     def effectiveTorques( self, Rs=None, DRs=None ):
