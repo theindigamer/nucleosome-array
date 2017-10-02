@@ -84,6 +84,30 @@ def standardNucleosomeArray(nucleosomeCount=36, basePairsPerRod=10):
                                 strandLength=totalLength)
     return dna
 
+def relaxedNucleosomeArray(nucleosomeCount=36, basePairsPerRod=10):
+    # all local bends and twists are set to zero here
+    basePairArray = [180] + ([60] * (nucleosomeCount - 1)) + [180]
+    # basePairArray = [600] + ([60] * (nucleosomeCount - 1)) + [600]
+    basePairLength = 0.34 # in nm.
+    totalLength = float(np.sum(basePairArray) * basePairLength)
+    numRods = np.array(basePairArray) // basePairsPerRod
+    L = int(np.sum(numRods))
+    nucleosomePos = np.cumsum(numRods)[:-1]
+    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=nucleosomePos,
+                                strandLength=totalLength)
+    # nakedDNA.__init__(self, L=L, B=B, C=C)
+    prev = np.array([0., 0., 0.])
+    for i in range(L):
+        if nucleosomePos.size != 0 and i == nucleosomePos[0]:
+            next = dnaMC.exitAngles(prev)
+            dna.euler[i] = copy.copy(next)
+            prev = next
+            nucleosomePos = nucleosomePos[1:]
+        else:
+            dna.euler[i] = copy.copy(prev)
+        # print(prev)
+    return dna
+
 def testNucleosomeArray(n=256, mcSteps=100, step_size=np.pi/32, nsamples=1,
                         nucleosomeCount=36, basePairsPerRod=10):
     dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
@@ -104,12 +128,6 @@ def testNucleosomeArrayRelax(mcSteps=1000, nsamples=1,
     results["totalLength"] = dna.strandLength # in nm
     return (dna, results)
 
-# def testNucleosomeNoTwist(L=32, mcSteps=100, nsamples=4, nucpos=[16], includeStart=False):
-#     dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
-#     results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples,
-#                                      includeStart=includeStart)
-#     return (dna, results)
-
 def nucleosomeInitialConfig(L=32, nucpos=[16]):
     dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
     _ = dna.deltaMatrices()
@@ -119,9 +137,13 @@ def nucleosomeInitialConfig(L=32, nucpos=[16]):
     results["rodLength"] = dna.d
     return (dna, results)
 
-def nucleosomeArrayInitialConfig(nucleosomeCount=36, basePairsPerRod=10):
-    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
-                                  basePairsPerRod=basePairsPerRod)
+def nucleosomeArrayInitialConfig(nucleosomeCount=36, basePairsPerRod=10, relaxed=False):
+    if relaxed:
+        dna = relaxedNucleosomeArray(nucleosomeCount=nucleosomeCount,
+                                     basePairsPerRod=basePairsPerRod)
+    else:
+        dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
+                                      basePairsPerRod=basePairsPerRod)
     results = {}
     results["angles"] = np.array([dna.euler])
     results["nucleosome"] = np.array(dna.nuc)

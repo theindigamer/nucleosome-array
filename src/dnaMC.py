@@ -329,7 +329,6 @@ t_f = normalize(np.array([-r_0*np.sin(zeta_max), -r_0*np.cos(zeta_max), z_0/(2*n
 b_f = np.cross(t_f, n_f)
 
 def axialRotMatrix(theta, axis='z'):
-    rot = []
     if axis == 'z':
         rot = np.array([
             [ np.cos(theta), np.sin(theta), 0.],
@@ -354,10 +353,9 @@ def axialRotMatrix(theta, axis='z'):
 
 nf_tf_matrix = np.array([n_f, b_f, t_f])
 
-# returns angles in order phi, theta, psi
 # WARNING: order in arctan2 is opposite to that of Mathematica
 def anglesOfEulerMatrix(m):
-    l = []
+    """Returns an array of angles in the order phi, theta, psi"""
     if m[2][2] > (1 - 10**-8) :
         l = [0, 0, np.arctan2(m[0][1], m[0][0])]
     elif m[2][2] < (-1. + 10**-8):
