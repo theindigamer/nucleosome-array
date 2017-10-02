@@ -14,8 +14,9 @@ import pprint
 
 def toListlike(results):
     tmp = copy.deepcopy(results)
-    tmp["angles"] = tmp["angles"].tolist()
-    tmp["tsteps"] = tmp["tsteps"].tolist()
+    for (key, val) in tmp.items():
+        if type(val) is np.ndarray:
+            tmp[key] = val.tolist()
     return tmp
 
 def savedata(results, fname):
@@ -27,7 +28,7 @@ def savedata(results, fname):
         with open(fname, "w") as f:
             json.dump(tmp, f)
     else:
-        print("Unrecognized file extension. Use .json or .pckl.")
+        raise ValueError("Unrecognized file extension. Use .json or .pckl.")
 
 def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
     """Twisting a DNA from one end.
@@ -39,6 +40,94 @@ def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
+
+def testFineSampling(L=32, mcSteps=100):
+    step_size = np.pi/32
+    sampling_start_twist_per_rod = np.pi * 75 / 180
+    pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
+
+    dna = dnaMC.nakedDNA(L=L)
+    res = dna.torsionProtocol(twists = step_size * np.arange(1, pre_sampling_steps + 1, 1), mcSteps=mcSteps//2)
+
+    max_twist_per_rod = np.pi * 90 / 180 # np.pi/2
+    total_steps = int(max_twist_per_rod * L / step_size)
+
+    result = dna.torsionProtocol(twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
+                                 mcSteps=mcSteps,
+                                 nsamples=mcSteps
+    )
+
+    for k,v in res["timing"].items():
+        result["timing"][k] += v
+
+    return (dna, result)
+
+
+def testNucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
+    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+    results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+                                  mcSteps=mcSteps, nsamples=nsamples)
+    return (dna, results)
+
+def standardNucleosomeArray(nucleosomeCount=36, basePairsPerRod=10):
+    #     60 bp between cores
+    #           |-|           600 bp spacers on either side
+    # ~~~~~~~~~~O~O~O...O~O~O~~~~~~~~~~
+    basePairArray = [180] + ([60] * (nucleosomeCount - 1)) + [180]
+    # basePairArray = [600] + ([60] * (nucleosomeCount - 1)) + [600]
+    basePairLength = 0.34 # in nm.
+    totalLength = float(np.sum(basePairArray) * basePairLength)
+    numRods = np.array(basePairArray) // basePairsPerRod
+    L = int(np.sum(numRods))
+    nucleosomePos = np.cumsum(numRods)[:-1]
+    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=nucleosomePos,
+                                strandLength=totalLength)
+    return dna
+
+def testNucleosomeArray(n=256, mcSteps=100, step_size=np.pi/32, nsamples=1,
+                        nucleosomeCount=36, basePairsPerRod=10):
+    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
+                                  basePairsPerRod=basePairsPerRod)
+    results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+                                  mcSteps=mcSteps, nsamples=nsamples)
+    results["rodLength"] = dna.d # in nm
+    results["totalLength"] = dna.strandLength # in nm
+    return (dna, results)
+
+def testNucleosomeArrayRelax(mcSteps=1000, nsamples=1,
+                             nucleosomeCount=36, basePairsPerRod=10, force=1.96):
+    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
+                                  basePairsPerRod=basePairsPerRod)
+    results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples,
+                                     force=force)
+    results["rodLength"] = dna.d # in nm
+    results["totalLength"] = dna.strandLength # in nm
+    return (dna, results)
+
+# def testNucleosomeNoTwist(L=32, mcSteps=100, nsamples=4, nucpos=[16], includeStart=False):
+#     dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+#     results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples,
+#                                      includeStart=includeStart)
+#     return (dna, results)
+
+def nucleosomeInitialConfig(L=32, nucpos=[16]):
+    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+    _ = dna.deltaMatrices()
+    results = {}
+    results["angles"] = np.array([dna.euler])
+    results["nucleosome"] = np.array(nucpos)
+    results["rodLength"] = dna.d
+    return (dna, results)
+
+def nucleosomeArrayInitialConfig(nucleosomeCount=36, basePairsPerRod=10):
+    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
+                                  basePairsPerRod=basePairsPerRod)
+    results = {}
+    results["angles"] = np.array([dna.euler])
+    results["nucleosome"] = np.array(dna.nuc)
+    results["totalLength"] = dna.strandLength # in nm
+    results["rodLength"] = dna.d # in nm
+    return (dna, results)
 
 def testDeltafn(L=32, height=np.pi/4, mcSteps=100, nsamples=4):
     """Testing the relaxation of a delta function set at L/2.
