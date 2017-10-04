@@ -20,16 +20,19 @@ class strand( object ):
         psiEnd is the twist at the right edge.
         The principal class attribute is the strand r vector: r = {x,y,z,psi}."""
     def __init__( self, L=128, B=43.E-9, C=89.E-9, SL=740.E-9, rd=1.2E-9, psiEnd=0.0,
-                thetaEnd=0.0 ):
+                thetaEnd=0.0, uniformlyTwisted=False ):
         self.L = L
         self.B = B
         self.C = C
         self.d = SL / (1.*self.L)
         self.rd = rd
-        self.r = np.zeros(( self.L, 4 ))
-        self.r[:,2] = np.arange( 0.0, self.L*self.d, self.d )
         self.psiEnd = psiEnd
         self.thetaEnd = thetaEnd
+        self.r = np.zeros(( self.L, 4 ))
+        self.r[:,1] = self.d * np.sin(self.thetaEnd) * np.arange(self.L)
+        self.r[:,2] = self.d * np.cos(self.thetaEnd) * np.arange(self.L)
+        if uniformlyTwisted:
+            self.r[:,3] = self.psiEnd * np.arange( self.L ) / self.L
 
     def tangent( self ):
         """ Returns the tangent vector field.
@@ -42,7 +45,6 @@ class strand( object ):
         tangent[:-1,...] = r[1:,...] - r[:-1,...]
         tangent[-1,1] = self.d * np.sin(self.thetaEnd)
         tangent[-1,2] = self.d * np.cos(self.thetaEnd)
-#        tangent[-1,2] = self.d
 
         return tangent 
 
@@ -68,7 +70,13 @@ class strand( object ):
         J[..., 2, 1] = -t[:,1] * t[:,2] / ( p * D**2 )
         J[..., 2, 2] = p / D**2
 
-        return J 
+        return J
+
+    def removeLocalStretch( self, tangent=None ):
+        """ Updates r vector to remove local stretch """
+        if tangent==None: tangent=self.tangent()
+        t = normalize( tangent, self.d )
+        self.r[:, :3] = np.cumsum( t, axis=0 )
 
 def parameters( strandClass, eta=9.22E-4 , kT=4.09E-21 ):
     """ Returns cR and cPsi parameters. (See notes) """
