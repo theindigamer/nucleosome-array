@@ -22,13 +22,16 @@ timer_descr = {
 }
 
 class nakedDNA:
+    roomTemp = 293.15
+
     """ Creates the naked DNA class.
         Euler angles are ordered as phi, theta and psi.
         Euler angle parametrization... """
-    def __init__(self, L=740, B=43.0, C=89.0):
+    def __init__(self, L=740, B=43.0, C=89.0, T=roomTemp):
         self.L = L
         self.B = B # in nm kT
         self.C = C # in nm kT
+        self.T = T # in Kelvin
         self.strandLength = 740.0 # in nm
         self.d = self.strandLength/L # to ensure that total length is 740 nm
         self.euler = np.zeros(( self.L, 3))
@@ -140,9 +143,9 @@ class nakedDNA:
             Enter the force in pN
             Our energy is in unit of kT.
             Es = force * tangent * prefactor
-            prefactor = 10E-12 10-9/ (1.38E-23 296.65).
+            prefactor = 1E-12 1E-9/ (1.38E-23 T).
             Change prefactor to change the temperature."""
-        prefactor = 0.24
+        prefactor = 1.0 / (1.38E-2 * (roomTemp if self.T == 0 else self.T))
         if tangent is None:
             tangent = self.tVector()
         return -force * prefactor * tangent[:-1,2]
@@ -192,7 +195,9 @@ class nakedDNA:
 
     def metropolisUpdate(self, sigma=0.1, squared=True, force=1.96, E0=None):
         """ Updates dnaClass Euler angles using Metropolis algorithm.
-        Returns the total energy density. """
+        Returns the total energy density.
+        Temperature T is in Kelvin.
+        """
         if E0 is None:
             E0 = self.totalEnergyDensity( squared=squared, force=force )
 
@@ -209,7 +214,8 @@ class nakedDNA:
             timers[1] += time.clock() - start
 
             reject = 1.0 * self.oddMask
-            reject[deltaE <= 0] = 0
+            # energy is in units of kT, 0.368 = exp(-1)
+            reject[deltaE <= (0 if self.T == 0 else 0.368)] = 0
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity( squared=squared, force=force )
 
@@ -221,7 +227,7 @@ class nakedDNA:
             deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
             reject = 1.0 * self.evenMask
-            reject[deltaE <= 0] = 0
+            reject[deltaE <= (0 if self.T == 0 else 0.368)] = 0
 
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity( squared=squared, force=force )
@@ -398,7 +404,8 @@ def exitAngles(entryangles):
     return anglesOfEulerMatrix(exitMatrix(entryangles))
 
 class nucleosomeArray(nakedDNA):
-    def __init__(self, L=740, B=43.0, C=89.0, nucleosomePos=np.array([]),
+    def __init__(self, L=740, B=43.0, C=89.0, T=nakedDNA.roomTemp,
+                 nucleosomePos=np.array([]),
                  strandLength=740):
         """ Initialize the nucleosome array.
 
@@ -410,7 +417,7 @@ class nucleosomeArray(nakedDNA):
         ends. It must **not** include the length of the DNA wrapped around the
         nucleosome core(s).
         """
-        nakedDNA.__init__(self, L=L, B=B, C=C)
+        nakedDNA.__init__(self, L=L, B=B, C=C, T=T)
         self.strandLength = strandLength
         self.d = strandLength/L
         self.nuc = nucleosomePos
