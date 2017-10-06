@@ -49,102 +49,76 @@ def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
     Returns a DNA object in the twisted form and a dictionary containing
     relevant parameters.
     """
-    dna = dnaMC.nakedDNA(L=L)
+    dna = dnaMC.NakedDNA(L=L)
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def testFineSampling(L=32, mcSteps=100):
+    """Skips sampling for some steps initially and then does fine sampling.
+
+    Use-case: collecting better data (say for visualization) and skip the boring
+    initial part.
+    """
     step_size = np.pi/32
     sampling_start_twist_per_rod = np.pi * 75 / 180
     pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
 
-    dna = dnaMC.nakedDNA(L=L)
-    res = dna.torsionProtocol(twists = step_size * np.arange(1, pre_sampling_steps + 1, 1), mcSteps=mcSteps//2)
-
-    max_twist_per_rod = np.pi * 90 / 180 # np.pi/2
-    total_steps = int(max_twist_per_rod * L / step_size)
-
-    result = dna.torsionProtocol(twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
-                                 mcSteps=mcSteps,
-                                 nsamples=mcSteps
+    dna = dnaMC.NakedDNA(L=L)
+    res = dna.torsionProtocol(
+        twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
+        mcSteps=mcSteps//2
     )
 
-    for k,v in res["timing"].items():
+    max_twist_per_rod = 90 * np.pi / 180
+    # written this way so it is easier to change the 90 value to something else
+    total_steps = int(max_twist_per_rod * L / step_size)
+
+    result = dna.torsionProtocol(
+        twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
+        mcSteps=mcSteps,
+        nsamples=mcSteps
+    )
+
+    for k, v in res["timing"].items():
         result["timing"][k] += v
 
     return (dna, result)
 
 
 def testNucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+    dna = dnaMC.NucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                   mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
 
 
-def nucleosomeArray(nucArrayType, nucleosomeCount=36, basePairsPerRod=10,
-                    linker=60, spacer=600):
-    """Initializes a nucleosome array in one of the predefined styles.
-
-    nucArrayType takes the values:
-      "standard" -> nucleosomes arranged roughly vertically
-      "relaxed"  -> initial twists and bends between rods are zero
-
-    linker and spacer values are specified in base pairs.
-    """
-    if linker % basePairsPerRod != 0:
-        raise ValueError("Number of rods in linker DNA should be an integer.\n"
-                         "linker value should be divisible by basePairsPerRod.")
-    if spacer % basePairsPerRod != 0:
-        raise ValueError("Number of rods in spacers should be an integer.\n"
-                         "spacer value should be divisible by basePairsPerRod.")
-    #     60 bp between cores
-    #           |-|           600 bp spacers on either side
-    # ~~~~~~~~~~O~O~O...O~O~O~~~~~~~~~~
-    basePairArray = [spacer-linker] + ([linker] * (nucleosomeCount - 1)) + [spacer]
-    basePairLength = 0.34 # in nm
-    totalLength = float(np.sum(basePairArray) * basePairLength)
-    numRods = np.array(basePairArray) // basePairsPerRod
-    L = int(np.sum(numRods))
-    nucleosomePos = np.cumsum(numRods)[:-1]
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=nucleosomePos,
-                                strandLength=totalLength)
-
-    if nucArrayType == "standard":
-        pass
-    elif nucArrayType == "relaxed":
-        prev = np.array([0., 0., 0.])
-        for i in range(L):
-            if nucleosomePos.size != 0 and i == nucleosomePos[0]:
-                next = dnaMC.exitAngles(prev)
-                dna.euler[i] = copy.copy(next)
-                prev = next
-                nucleosomePos = nucleosomePos[1:]
-            else:
-                dna.euler[i] = copy.copy(prev)
-    else:
-        raise ValueError("nucArrayType should be either 'standard' or 'relaxed'.")
-
-    return dna
-
-
-def testNucleosomeArray(protocol, nucArray="standard",
+def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
                         nucleosomeCount=36, basePairsPerRod=10,
                         linker=60, spacer=600, **protocol_kwargs):
     """Simulate a nucleosome array.
 
-    protocol should be one of 'twist', 'relax' or 'config'.
-    For protocol_kwargs, see twistProtocol/relaxationProtocol.
-    For the other kwargs, see nucleosomeArray.
+    ``protocol`` should be one of 'twist', 'relax' or 'config'.
+    If protocol is 'config', then ``protocol_kwargs`` should be empty.
+    Otherwise, see the kwargs for torsionProtocol/relaxationProtocol.
+    Other arguments are explained under ``dnaMC.NucleosomeArray.create``.
     """
-    dna = nucleosomeArray(nucArrayType=nucArrayType, nucleosomeCount=nucleosomeCount,
-                          basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
+    dna = dnaMC.NucleosomeArray.create(
+        nucArrayType=nucArrayType,
+        nucleosomeCount=nucleosomeCount,
+        basePairsPerRod=basePairsPerRod,
+        linker=linker,
+        spacer=spacer
+    )
+    dna.env.T = T
     if protocol == "twist":
         results = dna.torsionProtocol(**protocol_kwargs)
     elif protocol == "relax":
         results = dna.relaxationProtocol(**protocol_kwargs)
     elif protocol == "config":
+        if protocol_kwargs != {}:
+            raise ValueError("Unexpected kwargs. Did you intend to use the "
+                             "'twist' or 'relax' protocols?")
         results = {
             "angles": np.array([dna.euler]),
             "nucleosome": np.array(dna.nuc),
@@ -157,13 +131,13 @@ def testNucleosomeArray(protocol, nucArray="standard",
     return (dna, results)
 
 
-def testDiffusion(initialFn, L=32, T=dnaMC.nakedDNA.roomTemp, height=np.pi/4,
+def testDiffusion(initialFn, L=32, T=dnaMC.Environment.roomTemp, height=np.pi/4,
                   mcSteps=100, nsamples=4):
     """Testing for diffusion in DNA using a delta or a step profile initially.
 
     height should be small compared to 2*pi.
     """
-    dna = dnaMC.nakedDNA(L=L, T=T)
+    dna = dnaMC.NakedDNA(L=L, T=T)
     if initialFn == "delta":
         dna.euler[L//2, 2] = height
     elif initialFn == "step":
