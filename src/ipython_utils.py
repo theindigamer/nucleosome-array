@@ -98,10 +98,10 @@ def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
                         linker=60, spacer=600, **protocol_kwargs):
     """Simulate a nucleosome array.
 
-    ``protocol`` should be one of 'twist', 'relax' or 'config'.
-    If protocol is 'config', then ``protocol_kwargs`` should be empty.
+    `protocol` should be one of 'twist', 'relax' or 'config'.
+    If protocol is 'config', then `protocol_kwargs` should be empty.
     Otherwise, see the kwargs for torsionProtocol/relaxationProtocol.
-    Other arguments are explained under ``dnaMC.NucleosomeArray.create``.
+    Other arguments are explained under `dnaMC.NucleosomeArray.create`.
     """
     dna = dnaMC.NucleosomeArray.create(
         nucArrayType=nucArrayType,

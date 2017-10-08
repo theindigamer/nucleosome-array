@@ -1,10 +1,6 @@
 import numpy as np
-import scipy as sp
-import matplotlib
-import matplotlib.pylab as plt
-import pickle
-import os
 import time
+import utils
 
 class Environment:
     """Describes the environment of the DNA/nucleosome array.
@@ -41,13 +37,15 @@ class Simulation:
         # β^2 and Γ^2 or β and Γ. The former should be more accurate.
         self.squared = True
 
-
 class NakedDNA:
     """A strand of DNA without any nucleosomes.
 
     Euler angles are ordered as phi, theta and psi.
     Values of B and C are from [1, Table I].
     """
+
+    DEFAULT_TWIST_STEP = np.pi/4
+
     def __init__(self, L=740, B=43.0, C=89.0, T=Environment.roomTemp,
                  kickSize=Simulation.defaultKickSize):
         self.L = L
@@ -107,6 +105,7 @@ class NakedDNA:
         timers[7] += time.clock() - start
 
         return deltas
+
 
     def twistBendAngles(self, Ds=None):
         """ Returns the twist and bending angles."""
@@ -255,16 +254,28 @@ class NakedDNA:
         if E0 is None:
             E0 = self.totalEnergyDensity(force=force )
         energyList.append( np.sum( E0 ) )
-        for i in range(mcSteps):
-            E0 = self.metropolisUpdate(force, E0 )
-            energyList.append( np.sum(E0) )
-            xList.append(np.sum(self.tVector()[:,2]))
+        for _ in range(mcSteps):
+            E0 = self.metropolisUpdate(force, E0)
+            energyList.append(np.sum(E0))
+            xList.append(np.sum(self.tVector()[:, 2]))
         return np.array(energyList), np.array( xList )
 
     def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
-                        twists=np.pi/2*np.arange(1, 60, 1), nsamples=1,
+                        twists=2*np.pi, nsamples=1,
                         includeStart=False):
-        """Simulate a torsion protocol defined by twists."""
+        """Simulate a torsion protocol defined by twists.
+
+        The twists argument can be described in several ways
+        1. `twists=stop` will twist from 0 to stop (inclusive) with an
+        automatically chosen step size.
+        2. `twists=(stop, step)` will twist from 0 to stop (inclusive) with
+        step size `step`.
+        3. `twists=(start, stop, step)` is self-explanatory.
+        4. If `twists` is a list or numpy array, it will be used directly.
+
+
+        **Warning**: Twisting is _absolute_ not relative.
+        """
         start = time.clock()
         timers = self.sim.timers
         energyList = []
@@ -276,7 +287,8 @@ class NakedDNA:
         if mcSteps % nsamples != 0:
             nsteps.append(mcSteps % nsamples)
 
-        for x in twists:
+        tw = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        for x in tw:
             for nstep in nsteps:
                 self.euler[-1, 2] = x
                 energy, extension = self.mcRelaxation(force, E0, nstep)
@@ -292,7 +304,7 @@ class NakedDNA:
             "extension" : extensionList,
             "timing" : timings,
             "angles" : np.array(angles),
-            "tsteps" : np.cumsum(nsteps * len(twists)),
+            "tsteps" : np.cumsum(nsteps * len(tw)),
             "rodLength" : self.d,
         }
 
@@ -305,6 +317,7 @@ class NakedDNA:
         The DNA should be specified with the required profile already applied.
         """
         start = time.clock()
+        timers = self.sim.timers
 
         energies = []
         angles = []
@@ -320,9 +333,8 @@ class NakedDNA:
             angles.append(np.copy(self.euler))
             energies.append(energy)
 
-        global timers
         timers[8] += time.clock() - start
-        timings = {s : timers[i] for (i, s) in timer_descr.items()}
+        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
 
         return {
             "angles" : np.array(angles),
@@ -333,86 +345,6 @@ class NakedDNA:
             "rodLength" : self.d,
         }
 
-r_0 = 4.18 # radius of superhelix in nm
-z_0 = 2.39 # pitch of superhelix in nm
-n_wrap = 1.65 # number of times DNA winds around nucleosome
-zeta_max = 2*np.pi*n_wrap
-helix_entry_tilt = np.arctan2(-2*np.pi*r_0, z_0) # called lambda in the notes
-
-# Final normal, tangent and binormal vectors
-normalize = lambda x: x/np.linalg.norm(x)
-n_f = np.array([-np.cos(zeta_max), np.sin(zeta_max), 0])
-t_f = normalize(np.array([-r_0*np.sin(zeta_max), -r_0*np.cos(zeta_max), z_0/(2*np.pi)]))
-b_f = np.cross(t_f, n_f)
-
-def axialRotMatrix(theta, axis='z'):
-    if axis == 'z':
-        rot = np.array([
-            [ np.cos(theta), np.sin(theta), 0.],
-            [-np.sin(theta), np.cos(theta), 0.],
-            [            0.,            0., 1.]
-        ])
-    elif axis == 'x':
-        rot = np.array([
-            [1.,             0.,            0.],
-            [0.,  np.cos(theta), np.sin(theta)],
-            [0., -np.sin(theta), np.cos(theta)]
-        ])
-    elif axis == 'y':
-        rot = np.array([
-            [np.cos(theta), 0., -np.sin(theta)],
-            [           0., 1.,             0.],
-            [np.sin(theta), 0.,  np.cos(theta)]
-        ])
-    else:
-        raise ValueError("axis should be 'x', 'y' or 'z'.")
-    return rot
-
-nf_tf_matrix = np.array([n_f, b_f, t_f])
-
-# WARNING: order in arctan2 is opposite to that of Mathematica
-def anglesOfEulerMatrix(m):
-    """Returns an array of angles in the order phi, theta, psi"""
-    if m[2][2] > (1 - 10**-8) :
-        l = [0, 0, np.arctan2(m[0][1], m[0][0])]
-    elif m[2][2] < (-1. + 10**-8):
-        l = [0, np.pi, np.arctan2(m[0][1], m[0][0])]
-    else:
-        sintheta = np.sqrt(1-m[2][2]**2)
-        l = [
-            np.arctan2(m[0][2], m[1][2]),
-            np.arccos(m[2][2]),
-            np.arctan2(m[2][0], -m[2][1])
-        ]
-    return np.array(l)
-
-def eulerMatrixOfAngles(phi, theta, psi):
-    return (
-        axialRotMatrix(phi, axis='z') @
-        axialRotMatrix(theta, axis='x') @
-        axialRotMatrix(psi, axis='z')
-    )
-
-def Amatrix(entryangles):
-    phi, theta, psi = entryangles
-    return (
-        axialRotMatrix(helix_entry_tilt, 'x') @
-        axialRotMatrix(np.pi, 'z') @
-        np.transpose(eulerMatrixOfAngles(phi, theta, psi))
-    )
-    # TODO:
-    # I don't understand why the last transpose is needed.
-    # According to the Mathematica code, it shouldn't be needed.
-
-# angles given in order phi, theta, psi
-def exitMatrix(entryangles):
-    return np.transpose(
-        nf_tf_matrix @
-        Amatrix(entryangles)
-    )
-
-def exitAngles(entryangles):
-    return anglesOfEulerMatrix(exitMatrix(entryangles))
 
 class NucleosomeArray(NakedDNA):
     def __init__(self, nucleosomePos=np.array([]), strandLength=740, **dna_kwargs):
@@ -421,32 +353,33 @@ class NucleosomeArray(NakedDNA):
         By vertical configuration, we mean that all rods are vertical except
         the ones immediately 'coming out' of a nucleosome.
 
-        A nucleosome at position ``n`` is between rods of indices ``n-1`` and
-        ``n`` (zero-based).
+        A nucleosome at position `n` is between rods of indices `n-1` and
+        `n` (zero-based).
         `strandLength` should be specified in nm. It should only include the
         length of the DNA between the nucleosome core(s) plus the spacer at the
         ends. It must **not** include the length of the DNA wrapped around the
         nucleosome core(s).
-        ``dna_kwargs`` should be specified according to ``NakedDNA.__init__``'s
+        `dna_kwargs` should be specified according to `NakedDNA.__init__`'s
         kwargs.
 
-        **Note:** This class should not be constructed directly from outside.
-        Use ``create`` instead.
+        NOTE: You may want to use `create` instead of calling the constructor
+        directly.
         """
         NakedDNA.__init__(self, **dna_kwargs)
         self.strandLength = strandLength
         self.d = strandLength/dna_kwargs["L"]
         self.nuc = nucleosomePos
-        self.euler[self.nuc] = exitAngles([0., 0., 0.])
+        self.euler[self.nuc] = utils.exitAngles([0., 0., 0.])
 
+    @staticmethod
     def create(nucArrayType, nucleosomeCount=36, basePairsPerRod=10,
-                         linker=60, spacer=600):
+               linker=60, spacer=600):
         """Initializes a nucleosome array in one of the predefined styles.
 
-        ``nucArrayType`` takes the values:
+        `nucArrayType` takes the values:
         * 'standard' -> nucleosomes arranged roughly vertically
         * 'relaxed'  -> initial twists and bends between rods are zero
-        ``linker`` and ``spacer`` are specified in base pairs.
+        `linker` and `spacer` are specified in base pairs.
         """
         if linker % basePairsPerRod != 0:
             raise ValueError("Number of rods in linker DNA should be an integer.\n"
@@ -472,9 +405,9 @@ class NucleosomeArray(NakedDNA):
             prev = np.array([0., 0., 0.])
             for i in range(L):
                 if nucleosomePos.size != 0 and i == nucleosomePos[0]:
-                    next = dnaMC.exitAngles(prev)
-                    dna.euler[i] = np.copy(next)
-                    prev = next
+                    tmp = utils.exitAngles(prev)
+                    dna.euler[i] = np.copy(tmp)
+                    prev = tmp
                     nucleosomePos = nucleosomePos[1:]
                 else:
                     dna.euler[i] = np.copy(prev)
@@ -501,11 +434,8 @@ class NucleosomeArray(NakedDNA):
 
         start = time.clock()
         deltas = a @ b
-        inds = self.nuc - 1
-        deltas[inds] = np.array([
-            np.transpose(exitMatrix(anglesOfEulerMatrix(Rs[i]))) @ b[i] for i in inds
-        ])
-        # TODO: clean up this calculation
+        utils.calc_deltas(deltas, self.nuc, Rs)
+        # TODO: check if avoiding recalculation for nucleosome ends is faster
         timers[7] += time.clock() - start
 
         return deltas
@@ -535,12 +465,12 @@ class NucleosomeArray(NakedDNA):
         return R
 
     def anglesForDummyRods(self):
-        return np.array([exitAngles(self.euler[n-1]) for n in self.nuc])
+        return np.array([utils.exitAngles(self.euler[n-1]) for n in self.nuc])
 
     def torsionProtocol(self, **kwargs):
         """Twisting a nucleosome array from one end.
 
-        See ``NakedDNA.torsionProtocol`` for kwargs.
+        See `NakedDNA.torsionProtocol` for kwargs.
         """
         result = NakedDNA.torsionProtocol(self, **kwargs)
         result["nucleosome"] = self.nuc
@@ -554,7 +484,6 @@ class NucleosomeArray(NakedDNA):
         The DNA should be specified with the required profile already applied.
         """
         start = time.clock()
-        sigma = self.sim.kickSize
         timers = self.sim.timers
         energies = []
         angles = []
