@@ -11,6 +11,7 @@ class Environment:
     def __init__(self, T=roomTemp):
         self.T = T
 
+
 class Simulation:
     """Simulation parameters that can be varied."""
     defaultKickSize = 0.1
@@ -61,27 +62,7 @@ class NakedDNA:
 
     def rotationMatrices( self ):
         """Returns rotation matrices along the DNA string"""
-        phi = self.euler[:, 0]
-        cos_phi = np.cos(phi)
-        sin_phi = np.sin(phi)
-        theta = self.euler[:, 1]
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        psi = self.euler[:, 2]
-        cos_psi = np.cos(psi)
-        sin_psi = np.sin(psi)
-
-        R = np.zeros(( self.L, 3, 3 ))
-        R[:, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
-        R[:, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
-        R[:, 2, 0] = sin_theta * sin_psi
-        R[:, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
-        R[:, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
-        R[:, 2, 1] = -cos_psi * sin_theta
-        R[:, 0, 2] = sin_theta * sin_phi
-        R[:, 1, 2] = cos_phi * sin_theta
-        R[:, 2, 2] = cos_theta
-        return R
+        return utils.rotation_matrices(self.euler)
 
     def deltaMatrices( self, Rs=None ):
         """Returns Δ matrices describing bends/twists between consecutive rods."""
