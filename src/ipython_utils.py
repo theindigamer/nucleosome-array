@@ -12,12 +12,21 @@ import pickle
 import copy
 import pprint
 
+#-------------------#
+# Utility functions #
+#-------------------#
+
 def toListlike(results):
     tmp = copy.deepcopy(results)
     for (key, val) in tmp.items():
         if type(val) is np.ndarray:
             tmp[key] = val.tolist()
     return tmp
+
+
+def totalTime(result):
+    return result["timing"]["Total time"]
+
 
 def savedata(results, fname):
     tmp = toListlike(results)
@@ -30,151 +39,114 @@ def savedata(results, fname):
     else:
         raise ValueError("Unrecognized file extension. Use .json or .pckl.")
 
+#--------------------------#
+# Key simulation functions #
+#--------------------------#
+
 def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
     """Twisting a DNA from one end.
 
     Returns a DNA object in the twisted form and a dictionary containing
     relevant parameters.
     """
-    dna = dnaMC.nakedDNA(L=L)
+    dna = dnaMC.NakedDNA(L=L)
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def testFineSampling(L=32, mcSteps=100):
+    """Skips sampling for some steps initially and then does fine sampling.
+
+    Use-case: collecting better data (say for visualization) and skip the boring
+    initial part.
+    """
     step_size = np.pi/32
     sampling_start_twist_per_rod = np.pi * 75 / 180
     pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
 
-    dna = dnaMC.nakedDNA(L=L)
-    res = dna.torsionProtocol(twists = step_size * np.arange(1, pre_sampling_steps + 1, 1), mcSteps=mcSteps//2)
-
-    max_twist_per_rod = np.pi * 90 / 180 # np.pi/2
-    total_steps = int(max_twist_per_rod * L / step_size)
-
-    result = dna.torsionProtocol(twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
-                                 mcSteps=mcSteps,
-                                 nsamples=mcSteps
+    dna = dnaMC.NakedDNA(L=L)
+    res = dna.torsionProtocol(
+        twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
+        mcSteps=mcSteps//2
     )
 
-    for k,v in res["timing"].items():
+    max_twist_per_rod = 90 * np.pi / 180
+    # written this way so it is easier to change the 90 value to something else
+    total_steps = int(max_twist_per_rod * L / step_size)
+
+    result = dna.torsionProtocol(
+        twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
+        mcSteps=mcSteps,
+        nsamples=mcSteps
+    )
+
+    for k, v in res["timing"].items():
         result["timing"][k] += v
 
     return (dna, result)
 
 
 def testNucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+    dna = dnaMC.NucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                   mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
 
-def standardNucleosomeArray(nucleosomeCount=36, basePairsPerRod=10):
-    #     60 bp between cores
-    #           |-|           600 bp spacers on either side
-    # ~~~~~~~~~~O~O~O...O~O~O~~~~~~~~~~
-    basePairArray = [180] + ([60] * (nucleosomeCount - 1)) + [180]
-    # basePairArray = [600] + ([60] * (nucleosomeCount - 1)) + [600]
-    basePairLength = 0.34 # in nm.
-    totalLength = float(np.sum(basePairArray) * basePairLength)
-    numRods = np.array(basePairArray) // basePairsPerRod
-    L = int(np.sum(numRods))
-    nucleosomePos = np.cumsum(numRods)[:-1]
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=nucleosomePos,
-                                strandLength=totalLength)
-    return dna
 
-def relaxedNucleosomeArray(nucleosomeCount=36, basePairsPerRod=10):
-    # all local bends and twists are set to zero here
-    basePairArray = [180] + ([60] * (nucleosomeCount - 1)) + [180]
-    # basePairArray = [600] + ([60] * (nucleosomeCount - 1)) + [600]
-    basePairLength = 0.34 # in nm.
-    totalLength = float(np.sum(basePairArray) * basePairLength)
-    numRods = np.array(basePairArray) // basePairsPerRod
-    L = int(np.sum(numRods))
-    nucleosomePos = np.cumsum(numRods)[:-1]
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=nucleosomePos,
-                                strandLength=totalLength)
-    # nakedDNA.__init__(self, L=L, B=B, C=C)
-    prev = np.array([0., 0., 0.])
-    for i in range(L):
-        if nucleosomePos.size != 0 and i == nucleosomePos[0]:
-            next = dnaMC.exitAngles(prev)
-            dna.euler[i] = copy.copy(next)
-            prev = next
-            nucleosomePos = nucleosomePos[1:]
-        else:
-            dna.euler[i] = copy.copy(prev)
-        # print(prev)
-    return dna
+def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
+                        nucleosomeCount=36, basePairsPerRod=10,
+                        linker=60, spacer=600, **protocol_kwargs):
+    """Simulate a nucleosome array.
 
-def testNucleosomeArray(n=256, mcSteps=100, step_size=np.pi/32, nsamples=1,
-                        nucleosomeCount=36, basePairsPerRod=10):
-    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
-                                  basePairsPerRod=basePairsPerRod)
-    results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
-                                  mcSteps=mcSteps, nsamples=nsamples)
-    results["rodLength"] = dna.d # in nm
-    results["totalLength"] = dna.strandLength # in nm
-    return (dna, results)
-
-def testNucleosomeArrayRelax(mcSteps=1000, nsamples=1,
-                             nucleosomeCount=36, basePairsPerRod=10, force=1.96):
-    dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
-                                  basePairsPerRod=basePairsPerRod)
-    results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples,
-                                     force=force)
-    results["rodLength"] = dna.d # in nm
-    results["totalLength"] = dna.strandLength # in nm
-    return (dna, results)
-
-def nucleosomeInitialConfig(L=32, nucpos=[16]):
-    dna = dnaMC.nucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
-    _ = dna.deltaMatrices()
-    results = {}
-    results["angles"] = np.array([dna.euler])
-    results["nucleosome"] = np.array(nucpos)
-    results["rodLength"] = dna.d
-    return (dna, results)
-
-def nucleosomeArrayInitialConfig(nucleosomeCount=36, basePairsPerRod=10, relaxed=False):
-    if relaxed:
-        dna = relaxedNucleosomeArray(nucleosomeCount=nucleosomeCount,
-                                     basePairsPerRod=basePairsPerRod)
+    `protocol` should be one of 'twist', 'relax' or 'config'.
+    If protocol is 'config', then `protocol_kwargs` should be empty.
+    Otherwise, see the kwargs for torsionProtocol/relaxationProtocol.
+    Other arguments are explained under `dnaMC.NucleosomeArray.create`.
+    """
+    dna = dnaMC.NucleosomeArray.create(
+        nucArrayType=nucArrayType,
+        nucleosomeCount=nucleosomeCount,
+        basePairsPerRod=basePairsPerRod,
+        linker=linker,
+        spacer=spacer
+    )
+    dna.env.T = T
+    if protocol == "twist":
+        results = dna.torsionProtocol(**protocol_kwargs)
+    elif protocol == "relax":
+        results = dna.relaxationProtocol(**protocol_kwargs)
+    elif protocol == "config":
+        if protocol_kwargs != {}:
+            raise ValueError("Unexpected kwargs. Did you intend to use the "
+                             "'twist' or 'relax' protocols?")
+        results = {
+            "angles": np.array([dna.euler]),
+            "nucleosome": np.array(dna.nuc),
+            "totalLength": dna.strandLength,
+            "rodLength": dna.d,
+        }
     else:
-        dna = standardNucleosomeArray(nucleosomeCount=nucleosomeCount,
-                                      basePairsPerRod=basePairsPerRod)
-    results = {}
-    results["angles"] = np.array([dna.euler])
-    results["nucleosome"] = np.array(dna.nuc)
-    results["totalLength"] = dna.strandLength # in nm
-    results["rodLength"] = dna.d # in nm
+        raise ValueError("The first argument protocol must be one of 'twist',"
+                         " 'relax' or 'config'.")
     return (dna, results)
 
-def testDeltafn(L=32, height=np.pi/4, mcSteps=100, nsamples=4):
-    """Testing the relaxation of a delta function set at L/2.
 
-    height should be given a small value (w.r.t 2pi) as energy calculations
-    are invariant under pi additional twist between rods.
+def testDiffusion(initialFn, L=32, T=dnaMC.Environment.roomTemp, height=np.pi/4,
+                  mcSteps=100, nsamples=4):
+    """Testing for diffusion in DNA using a delta or a step profile initially.
+
+    height should be small compared to 2*pi.
     """
-    dna = dnaMC.nakedDNA(L=L)
-    dna.euler[L//2,2] = height
+    dna = dnaMC.NakedDNA(L=L, T=T)
+    if initialFn == "delta":
+        dna.euler[L//2, 2] = height
+    elif initialFn == "step":
+        dna.euler[L//2:, 2] = height
+    else:
+        raise ValueError("The first argument initialFn should be either 'delta'"
+                         " or 'step'.")
     results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
-
-def testStepfn(L=32, height=np.pi/4, mcSteps=100, nsamples=4):
-    """Testing the relaxation of a step function rising at L/2.
-
-    height should be given a small value (w.r.t 2pi) as energy calculations
-    are invariant under 2pi additional twist between rods.
-    """
-    dna = dnaMC.nakedDNA(L=L)
-    dna.euler[L//2:,2] = height
-    results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
-    return (dna, results)
-
-def totalTime(result):
-    return result["timing"]["Total time"]
 
 def plotAngles(dna, result, totalOnly=True, show=True):
     """Make a plot of angles as a function of x (rod number).
@@ -199,7 +171,7 @@ def gaussian(x, mu, A, sig):
 def erf(x, mu, A, sig):
     return A * scipy.special.erf((x-mu)/(sqrt(2)*sig)) + A
 
-def __fitTwist(L, angles, fitfn):
+def _fitTwist(L, angles, fitfn):
     return curve_fit(fitfn, np.arange(0,L), angles[:,0] + angles[:,2], p0=(L/2, 1, 5))
 
 pointsPerRod = 5 # for smoother plot of fit
@@ -212,7 +184,7 @@ def fitEvolution(L, results, fitfn, values=False):
 
     params = []
     for angles in results["angles"]:
-        params.append(__fitTwist(L, angles, fitfn))
+        params.append(_fitTwist(L, angles, fitfn))
     if values:
         fits = []
         for (p, _) in params:
