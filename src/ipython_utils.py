@@ -43,18 +43,20 @@ def savedata(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1):
+def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1,
+         T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
+         dnaClass=dnaMC.NakedDNA):
     """Twisting a DNA from one end.
 
     Returns a DNA object in the twisted form and a dictionary containing
     relevant parameters.
     """
-    dna = dnaMC.NakedDNA(L=L)
+    dna = dnaClass(L=L, T=T, kickSize=kickSize)
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
-def testFineSampling(L=32, mcSteps=100):
+def testFineSampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
 
     Use-case: collecting better data (say for visualization) and skip the boring
@@ -64,10 +66,10 @@ def testFineSampling(L=32, mcSteps=100):
     sampling_start_twist_per_rod = np.pi * 75 / 180
     pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
 
-    dna = dnaMC.NakedDNA(L=L)
+    dna = dnaClass(L=L)
     res = dna.torsionProtocol(
         twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
-        mcSteps=mcSteps//2
+        mcSteps = mcSteps//2
     )
 
     max_twist_per_rod = 90 * np.pi / 180
@@ -132,12 +134,15 @@ def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
 
 
 def testDiffusion(initialFn, L=32, T=dnaMC.Environment.roomTemp, height=np.pi/4,
-                  mcSteps=100, nsamples=4):
+                  mcSteps=100, nsamples=4, dnaClass=dnaMC.NakedDNA,
+                  kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE):
     """Testing for diffusion in DNA using a delta or a step profile initially.
+
+    initialFn should be one of "delta" or "step".
 
     height should be small compared to 2*pi.
     """
-    dna = dnaMC.NakedDNA(L=L, T=T)
+    dna = dnaClass(L=L, T=T, kickSize=kickSize)
     if initialFn == "delta":
         dna.euler[L//2, 2] = height
     elif initialFn == "step":
@@ -225,10 +230,10 @@ def plotEvolution(results, show=True, fits=None):
 def diffusionSigma(logt, D, power):
     return power*(log10(2*D) + logt)
 
-def fitSigma(params, tsteps, show=True):
-    """Checks if the scale factor depends as a power law on time.
-    """
-    sig = np.array([p[0][2] for p in params])
+def fitSigma(params, full_tsteps, show=True, start=0):
+    """Checks if the scale factor depends as a power law on time."""
+    tsteps = full_tsteps[start:]
+    sig = np.array([p[0][2] for p in params])[start:]
     plt.scatter(log10(tsteps), log10(sig))
     popt, pcov = curve_fit(diffusionSigma, log10(tsteps), log10(sig))
     D, power = popt[0], popt[1]
@@ -243,3 +248,20 @@ def fitSigma(params, tsteps, show=True):
         plt.ylabel("log(σ) (σ in number of rods)")
         plt.show()
     return ((D, deltaD), (power, deltaPower))
+
+def dna_check_acceptance(Ts, kickSizes, f, *fargs, **fkwargs):
+    results = []
+    for T in Ts:
+        for kickSize in kickSizes:
+            fkwargs.update({
+                "T": T,
+                "kickSize": kickSize,
+                "dnaClass": dnaMC.NakedDNAWAcceptanceRatios,
+            })
+            dna, res = f(*fargs, **fkwargs)
+            res.update({
+                "T": T,
+                "kickSize": kickSize,
+            })
+            results.append(res.copy())
+    return results

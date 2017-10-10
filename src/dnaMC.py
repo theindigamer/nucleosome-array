@@ -14,7 +14,7 @@ class Environment:
 
 class Simulation:
     """Simulation parameters that can be varied."""
-    defaultKickSize = 0.1
+    DEFAULT_KICK_SIZE = 0.1
     ntimers = 10
     timer_descr = {
         0 : "Half of inner loop in metropolisUpdate",
@@ -31,7 +31,7 @@ class Simulation:
     # TODO: fix defaultKickSize
     # Afterwards, kickSize should not be specified as an argument.
     # It should automatically be determined from the temperature.
-    def __init__(self, kickSize=defaultKickSize):
+    def __init__(self, kickSize=DEFAULT_KICK_SIZE):
         self.kickSize = kickSize
         self.timers = np.zeros(Simulation.ntimers)
         # Describes whether computations use approximate forms for
@@ -48,7 +48,7 @@ class NakedDNA:
     DEFAULT_TWIST_STEP = np.pi/4
 
     def __init__(self, L=740, B=43.0, C=89.0, T=Environment.roomTemp,
-                 kickSize=Simulation.defaultKickSize):
+                 kickSize=Simulation.DEFAULT_KICK_SIZE):
         self.L = L
         self.B = B # in nm kT
         self.C = C # in nm kT
@@ -56,11 +56,11 @@ class NakedDNA:
         self.sim = Simulation(kickSize=kickSize)
         self.strandLength = 740.0 # in nm
         self.d = self.strandLength/L # to ensure that total length is 740 nm
-        self.euler = np.zeros(( self.L, 3))
+        self.euler = np.zeros((self.L, 3))
         self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
         self.evenMask = np.roll(self.oddMask, 1)
 
-    def rotationMatrices( self ):
+    def rotationMatrices(self):
         """Returns rotation matrices along the DNA string"""
         return utils.rotation_matrices(self.euler)
 
@@ -273,8 +273,8 @@ class NakedDNA:
             for nstep in nsteps:
                 self.euler[-1, 2] = x
                 energy, extension = self.mcRelaxation(force, E0, nstep)
-                energyList.append( energy[-1] )
-                extensionList.append( extension[-1] )
+                energyList.append(energy[-1])
+                extensionList.append(extension[-1])
                 angles.append(np.copy(self.euler))
         timers[8] += time.clock() - start
 
@@ -327,6 +327,147 @@ class NakedDNA:
         }
 
 
+class NakedDNAWAcceptanceRatios(NakedDNA):
+
+    def metropolisUpdate(self, force=1.96, E0=None):
+        """ Updates dnaClass Euler angles using Metropolis algorithm.
+        Returns the total energy density.
+        Temperature T is in Kelvin.
+        """
+        sigma = self.sim.kickSize
+        timers = self.sim.timers
+
+        if E0 is None:
+            E0 = self.totalEnergyDensity(force=force)
+
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves[np.abs(moves) >= 5.0*sigma] = 0
+
+        accepted_fraction = np.zeros(3)
+
+        for i in range(3):
+            start = time.clock()
+            self.euler[1:-1, i] += moves[:, i] * self.oddMask
+            Ef = self.totalEnergyDensity(force=force)
+            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+            timers[1] += time.clock() - start
+
+            reject = 1.0 * self.oddMask
+            # energy is in units of kT, 0.368 = exp(-1)
+            # 0 ⇔ move is accepted
+            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            self.euler[1:-1,i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity(force=force)
+            accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
+            timers[0] += time.clock() - start
+
+            self.euler[1:-1, i] += moves[:, i] * self.evenMask
+            Ef = self.totalEnergyDensity(force=force)
+            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+
+            reject = 1.0 * self.evenMask
+            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            self.euler[1:-1,i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity(force=force)
+            accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
+
+        return E0, accepted_fraction
+
+    def mcRelaxation(self, force=1.96, E0=None, mcSteps=100):
+        """ Monte Carlo relaxation using Metropolis algorithm. """
+        energyList = []
+        xList = []
+        if E0 is None:
+            E0 = self.totalEnergyDensity(force=force)
+        energyList.append( np.sum( E0 ) )
+        for _ in range(mcSteps - 1):
+            E0 = NakedDNA.metropolisUpdate(self, force, E0)
+            energyList.append(np.sum(E0))
+            xList.append(np.sum(self.tVector()[:, 2]))
+        E0, acc = self.metropolisUpdate(force, E0)
+        energyList.append(np.sum(E0))
+        xList.append(np.sum(self.tVector()[:, 2]))
+        return np.array(energyList), np.array(xList), acc
+
+    def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
+                        twists=2*np.pi, nsamples=1, includeStart=False):
+        start = time.clock()
+        timers = self.sim.timers
+        energyList = []
+        extensionList = []
+        angles = []
+        acceptance_ratios = []
+
+        if includeStart:
+            angles.append(np.copy(self.euler))
+        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
+        if mcSteps % nsamples != 0:
+            nsteps.append(mcSteps % nsamples)
+
+        tw = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        for x in tw:
+            for nstep in nsteps:
+                self.euler[-1, 2] = x
+                energy, extension, acc = self.mcRelaxation(force, E0, nstep)
+                energyList.append(energy[-1])
+                extensionList.append(extension[-1])
+                angles.append(np.copy(self.euler))
+                acceptance_ratios.append(acc)
+
+        timers[8] += time.clock() - start
+
+        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+
+        return {
+            "energy": energyList,
+            "extension": extensionList,
+            "timing": timings,
+            "angles": np.array(angles),
+            "tsteps": np.cumsum(nsteps * len(tw)),
+            "rodLength": self.d,
+            "acceptance": np.array(acceptance_ratios),
+        }
+
+    def relaxationProtocol(self, force=1.96, E0=None,
+                           mcSteps=1000, nsamples=4, includeStart=False):
+        """
+        Simulate a relaxation for an initial twist profile.
+
+        The DNA should be specified with the required profile already applied.
+        """
+        start = time.clock()
+        timers = self.sim.timers
+
+        energies = []
+        angles = []
+        acceptance_ratios = []
+        if includeStart:
+            angles.append(self.euler)
+
+        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
+        if mcSteps % nsamples != 0:
+            nsteps.append(mcSteps % nsamples)
+
+        for nstep in nsteps:
+            energy, _, acc = self.mcRelaxation(force, E0, nstep)
+            angles.append(np.copy(self.euler))
+            energies.append(energy)
+            acceptance_ratios.append(acc)
+
+        timers[8] += time.clock() - start
+        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+
+        return {
+            "angles": np.array(angles),
+            "tsteps": np.cumsum(nsteps),
+            "timing": timings,
+            "energies": np.array(energies),
+            "strandLength": self.strandLength,
+            "rodLength": self.d,
+            "acceptance": np.array(acceptance_ratios)
+        }
+
+
 class NucleosomeArray(NakedDNA):
     def __init__(self, nucleosomePos=np.array([]), strandLength=740, **dna_kwargs):
         """Initialize the nucleosome array in the default 'vertical' configuration.
@@ -373,12 +514,12 @@ class NucleosomeArray(NakedDNA):
         # ~~~~~~~~~~O~O~O...O~O~O~~~~~~~~~~
         basePairArray = [spacer] + ([linker] * (nucleosomeCount - 1)) + [spacer]
         basePairLength = 0.34 # in nm
-        totalLength = float(np.sum(basePairArray) * basePairLength)
+        strandLength = float(np.sum(basePairArray) * basePairLength)
         numRods = np.array(basePairArray) // basePairsPerRod
         L = int(np.sum(numRods))
         nucleosomePos = np.cumsum(numRods)[:-1]
         dna = NucleosomeArray(L=L, nucleosomePos=nucleosomePos,
-                              strandLength=totalLength)
+                              strandLength=strandLength, kickSize=kickSize)
 
         if nucArrayType == "standard":
             pass
