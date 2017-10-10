@@ -10,7 +10,9 @@ import json
 import pickle
 
 import copy
+import itertools
 import pprint
+
 
 #-------------------#
 # Utility functions #
@@ -43,7 +45,7 @@ def savedata(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1,
+def simulate_dna(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1,
          T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
          dnaClass=dnaMC.NakedDNA):
     """Twisting a DNA from one end.
@@ -56,7 +58,7 @@ def test(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1,
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
-def testFineSampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
+def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
 
     Use-case: collecting better data (say for visualization) and skip the boring
@@ -88,14 +90,13 @@ def testFineSampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     return (dna, result)
 
 
-def testNucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-    dna = dnaMC.NucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
-    results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
-                                  mcSteps=mcSteps, nsamples=nsamples)
-    return (dna, results)
+# def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
+#     dna = dnaMC.NucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+#     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+#                                   mcSteps=mcSteps, nsamples=nsamples)
+#     return (dna, results)
 
-
-def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
+def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
                         nucleosomeCount=36, basePairsPerRod=10,
                         linker=60, spacer=600, **protocol_kwargs):
     """Simulate a nucleosome array.
@@ -118,9 +119,9 @@ def testNucleosomeArray(protocol, T=293.15, nucArrayType="standard",
     elif protocol == "relax":
         results = dna.relaxationProtocol(**protocol_kwargs)
     elif protocol == "config":
-        if protocol_kwargs != {}:
+        if protocol_kwargs:
             raise ValueError("Unexpected kwargs. Did you intend to use the "
-                             "'twist' or 'relax' protocols?")
+                             "'twist' or 'relax' protocol?")
         results = {
             "angles": np.array([dna.euler]),
             "nucleosome": np.array(dna.nuc),
@@ -153,22 +154,48 @@ def testDiffusion(initialFn, L=32, T=dnaMC.Environment.roomTemp, height=np.pi/4,
     results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
 
-def plotAngles(dna, result, totalOnly=True, show=True):
-    """Make a plot of angles as a function of x (rod number).
 
-    Use case: after using twistProtocol on the dna object.
+def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
+    """Check kick acceptance rates for different kick sizes and temperatures.
+
+    Ts and kickSizes are nonempty lists of temperatures and kick sizes to try.
+
+    If mode is "product", all possible combinations of the two are used.
+    If mode is "zip", the two lists are zipped and used.
+
+    args and kwargs are for the testDiffusion function.
     """
-    euler = dna.euler/(2*np.pi)
-    if not totalOnly:
-        plt.plot(euler[:,0], label="φ")
-        plt.plot(euler[:,1], label="ϑ")
-        plt.plot(euler[:,2], label="ψ")
-    plt.plot(euler[:,0] + euler[:,2], label="φ+ψ")
-    plt.legend(loc="upper left")
-    plt.title("Running time {0:.1f} s".format(totalTime(result)))
-    plt.ylabel("Angle/2π radians")
-    if show:
-        plt.show()
+    if mode == "product":
+        T_ks = itertools.product(Ts, kickSizes)
+    elif mode == "zip":
+        if len(Ts) != len(kickSizes):
+            raise ValueError(
+                "The temperature and kick size lists have mismatched sizes."
+                " Did you intend to use mode='product' instead?"
+            )
+        T_ks = zip(Ts, kickSizes)
+    else:
+        raise ValueError("Unrecognized value of mode."
+                         " Recognized values are 'product' and 'zip'.")
+    results = []
+    for (T, kickSize) in T_ks:
+        kwargs.update({
+            "T": T,
+            "kickSize": kickSize,
+            "dnaClass": dnaMC.NakedDNAWAcceptanceRatios,
+        })
+        _, res = testDiffusion(*args, **kwargs)
+        res.update({
+            "T": T,
+            "kickSize": kickSize,
+        })
+        results.append(res.copy())
+    return results
+
+
+#---------------------#
+# Naked DNA evolution #
+#---------------------#
 
 def gaussian(x, mu, A, sig):
     return A * np.exp(-(x-mu)**2/(2*sig**2)) / (sqrt(2*np.pi)*sig)
@@ -210,6 +237,27 @@ def areas(results):
     pp.pprint(table)
     return table[1:]
 
+#--------------------#
+# Plotting functions #
+#--------------------#
+
+def plotAngles(dna, result, totalOnly=True, show=True):
+    """Make a plot of angles as a function of x (rod number).
+
+    Use case: after using twistProtocol on the dna object.
+    """
+    euler = dna.euler/(2*np.pi)
+    if not totalOnly:
+        plt.plot(euler[:,0], label="φ")
+        plt.plot(euler[:,1], label="ϑ")
+        plt.plot(euler[:,2], label="ψ")
+    plt.plot(euler[:,0] + euler[:,2], label="φ+ψ")
+    plt.legend(loc="upper left")
+    plt.title("Running time {0:.1f} s".format(totalTime(result)))
+    plt.ylabel("Angle/2π radians")
+    if show:
+        plt.show()
+
 def plotEvolution(results, show=True, fits=None):
     """Make a plot of angles as a function of x (rod number) at different times.
 
@@ -248,20 +296,3 @@ def fitSigma(params, full_tsteps, show=True, start=0):
         plt.ylabel("log(σ) (σ in number of rods)")
         plt.show()
     return ((D, deltaD), (power, deltaPower))
-
-def dna_check_acceptance(Ts, kickSizes, f, *fargs, **fkwargs):
-    results = []
-    for T in Ts:
-        for kickSize in kickSizes:
-            fkwargs.update({
-                "T": T,
-                "kickSize": kickSize,
-                "dnaClass": dnaMC.NakedDNAWAcceptanceRatios,
-            })
-            dna, res = f(*fargs, **fkwargs)
-            res.update({
-                "T": T,
-                "kickSize": kickSize,
-            })
-            results.append(res.copy())
-    return results
