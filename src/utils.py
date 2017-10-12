@@ -30,6 +30,13 @@ def rotation_matrices(euler):
         R[i, 2, 2] = cos_theta
     return R
 
+def partition(n_parts, total):
+    arr = np.array([total // n_parts] * n_parts if total >= n_parts else [])
+    rem = total % n_parts
+    if rem != 0:
+        return np.append(arr, rem)
+    return arr
+
 def smart_arange(start, stop, step, incl=True):
     s = step if (stop - start) * step > 0 else -step
     return np.arange(start, stop + (s if incl else 0.0), s)

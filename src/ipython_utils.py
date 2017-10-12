@@ -91,7 +91,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
 
 
 # def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-#     dna = dnaMC.NucleosomeArray(L=L, nucleosomePos=np.array(nucpos))
+#     dna = dnaMC.NucleosomeArray(L=L, nucPos=np.array(nucpos))
 #     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
 #                                   mcSteps=mcSteps, nsamples=nsamples)
 #     return (dna, results)

@@ -38,27 +38,112 @@ class Simulation:
         # β^2 and Γ^2 or β and Γ. The former should be more accurate.
         self.squared = True
 
+class Evolution:
+    """Records the evolution of a DNA strand and simulation parameters."""
+    def __init__(self, dna, nsteps, twists=None, initial=False, accept_p=False):
+        """Initialize an evolution object.
+
+        ``twists`` is either a nonempty ``numpy`` array (twisting) or ``None``
+        (relaxation).
+        ``nsteps`` represents successive number of MC steps.
+        If ``twists`` is ``None``, it is interpreted to represent the entire
+        simulation. So [10, 10, 5] means that the simulation has 25 steps total.
+        If ``twists`` is a numpy array, it is interpreted to be the number of
+        steps between consecutive twists.
+        So ``twists = [0, pi/2]`` and ``nsteps=[10, 10, 5]`` implies there are
+        50 MC steps in total, split up as 10, 10, 5, 10, 10, 5.
+        """
+        self.nstep_i = 0
+        self.tstep_i = 0
+        if twists is None:
+            tsteps = np.cumsum(nsteps)
+        else:
+            tsteps = np.cumsum(nsteps) * twists.size
+        if initial:
+            tsteps = np.insert(tsteps, 0, 0)
+        self.data = dna.constants()
+        self.data.update({
+            "twists": twists,
+            "tsteps": tsteps,
+            "angles": np.empty((tsteps.size, dna.L, 3)),
+            "extension": np.empty((tsteps.size, 3)),
+            "energy": np.empty(tsteps.size),
+            "acceptance": (None if accept_p else np.empty((nsteps.size, 3))),
+        })
+        if isinstance(dna, NucleosomeArray):
+            self.data.update({"nucleosome": np.array(dna.nuc)})
+        if initial:
+            self.save_energy(dna.totalEnergy())                          \
+                .save_extension(dna.totalExtension())                    \
+                .save_angles(dna)
+
+    def update(self, dictionary):
+        self.data.update(dictionary)
+        return self
+
+    def save_angles(self, dna):
+        self.data["angles"][self.tstep_i] = dna.euler
+        self.tstep_i += 1
+        return self
+
+    def save_extension(self, extension):
+        self.data["extension"][self.tstep_i] = extension[-1]
+        return self
+
+    def save_energy(self, energy):
+        self.data["energy"][self.tstep_i] = energy[-1]
+        return self
+
+    def save_timing(self, timing):
+        self.data.update({"timing": timing})
+        return self
+
+    def save_acceptance(self, acceptance):
+        self.data["acceptance"][self.nstep_i] = acceptance
+        self.nstep_i += 1
+        return self
+
+    def to_dict(self):
+        return self.data
+
 class NakedDNA:
     """A strand of DNA without any nucleosomes.
 
     Euler angles are ordered as phi, theta and psi.
     Values of B and C are from [1, Table I].
+    [1, (30)] describes the microscopic parameter Bm computed from B.
+    [1, Appendix 1] describes equations related to disorder.
     """
 
     DEFAULT_TWIST_STEP = np.pi/4
 
-    def __init__(self, L=740, B=43.0, C=89.0, T=Environment.roomTemp,
+    def __init__(self, L=740, B=43.0, C=89.0,
+                 T=Environment.roomTemp,
                  kickSize=Simulation.DEFAULT_KICK_SIZE):
         self.L = L
-        self.B = B # in nm kT
-        self.C = C # in nm kT
+        # B, Bm and C are in nm kT
+        self.B = B
+        self.Bm = B # no disorder
+        self.C = C
         self.env = Environment(T=T)
         self.sim = Simulation(kickSize=kickSize)
         self.strandLength = 740.0 # in nm
-        self.d = self.strandLength/L # to ensure that total length is 740 nm
+        self.d = self.strandLength/L # total length is 740 nm
         self.euler = np.zeros((self.L, 3))
         self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
         self.evenMask = np.roll(self.oddMask, 1)
+
+    def constants(self):
+        return {
+            "temperature": self.env.T,
+            "B": self.B,
+            "Bm": self.Bm,
+            "C": self.C,
+            "rodCount": self.L,
+            "strandLength": self.strandLength,
+            "rodLength": self.d,
+            "kickSize": self.sim.kickSize,
+        }
 
     def rotationMatrices(self):
         """Returns rotation matrices along the DNA string"""
@@ -67,7 +152,6 @@ class NakedDNA:
     def deltaMatrices( self, Rs=None ):
         """Returns Δ matrices describing bends/twists between consecutive rods."""
         timers = self.sim.timers
-
         start = time.clock()
         if Rs is None:
             Rs = self.rotationMatrices()
@@ -84,9 +168,7 @@ class NakedDNA:
         start = time.clock()
         deltas = a @ b
         timers[7] += time.clock() - start
-
         return deltas
-
 
     def twistBendAngles(self, Ds=None):
         """ Returns the twist and bending angles."""
@@ -108,9 +190,10 @@ class NakedDNA:
         if angles is None:
             angles = self.twistBendAngles()
         if self.sim.squared:
-            energy_density = self.B * angles[0] / (2.0*self.d)
+            energy_density = self.Bm / (2.0*self.d) * angles[0]
         else:
-            energy_density = self.B * (angles[0]**2 + angles[1]**2) / (2.0*self.d)
+            energy_density = (self.Bm / (2.0*self.d)
+                              * (angles[0]**2 + angles[1]**2))
         return energy_density, angles
 
     def bendingEnergy(self, bendEnergyDensity=None):
@@ -228,6 +311,10 @@ class NakedDNA:
 
         return E0
 
+    def totalExtension(self):
+        """Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
+        return self.d * np.sum(self.tVector(), axis=0)
+
     def mcRelaxation(self, force=1.96, E0=None, mcSteps=100):
         """ Monte Carlo relaxation using Metropolis algorithm. """
         energyList = []
@@ -238,58 +325,42 @@ class NakedDNA:
         for _ in range(mcSteps):
             E0 = self.metropolisUpdate(force, E0)
             energyList.append(np.sum(E0))
-            xList.append(np.sum(self.tVector()[:, 2]))
-        return np.array(energyList), np.array( xList )
+            xList.append(self.totalExtension())
+        return np.array(energyList), np.array(xList)
 
     def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
                         twists=2*np.pi, nsamples=1,
                         includeStart=False):
         """Simulate a torsion protocol defined by twists.
 
-        The twists argument can be described in several ways
-        1. `twists=stop` will twist from 0 to stop (inclusive) with an
+        The twists argument can be described in several ways:
+        1. ``twists=stop`` will twist from 0 to stop (inclusive) with an
         automatically chosen step size.
-        2. `twists=(stop, step)` will twist from 0 to stop (inclusive) with
-        step size `step`.
-        3. `twists=(start, stop, step)` is self-explanatory.
-        4. If `twists` is a list or numpy array, it will be used directly.
+        2. ``twists=(stop, step)`` will twist from 0 to stop (inclusive) with
+        step size ``step``.
+        3. ``twists=(start, stop, step)`` is self-explanatory.
+        4. If ``twists`` is a list or numpy array, it will be used directly.
 
-
-        **Warning**: Twisting is _absolute_ not relative.
+        **Warning**: Twisting is *absolute* not relative.
         """
         start = time.clock()
         timers = self.sim.timers
-        energyList = []
-        extensionList = []
-        angles = []
-        if includeStart:
-            angles.append(np.copy(self.euler))
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
-        if mcSteps % nsamples != 0:
-            nsteps.append(mcSteps % nsamples)
-
-        tw = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
-        for x in tw:
+        nsteps = utils.partition(nsamples, mcSteps)
+        tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        evol = Evolution(self, nsteps, twists=tmp_twists, initial=includeStart)
+        evol.update({"force": force, "mcSteps": mcSteps})
+        for x in tmp_twists:
             for nstep in nsteps:
                 self.euler[-1, 2] = x
                 energy, extension = self.mcRelaxation(force, E0, nstep)
-                energyList.append(energy[-1])
-                extensionList.append(extension[-1])
-                angles.append(np.copy(self.euler))
+                evol.save_energy(energy)                                       \
+                    .save_extension(extension)                                 \
+                    .save_angles(self)
         timers[8] += time.clock() - start
+        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        evol.save_timing(timing)
+        return evol.to_dict()
 
-        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-
-        return {
-            "energy" : energyList,
-            "extension" : extensionList,
-            "timing" : timings,
-            "angles" : np.array(angles),
-            "tsteps" : np.cumsum(nsteps * len(tw)),
-            "rodLength" : self.d,
-        }
-
-    # TODO: fix kick size
     def relaxationProtocol(self, force=1.96, E0=None,
                            mcSteps=1000, nsamples=4, includeStart=False):
         """
@@ -299,32 +370,18 @@ class NakedDNA:
         """
         start = time.clock()
         timers = self.sim.timers
-
-        energies = []
-        angles = []
-        if includeStart:
-            angles.append(self.euler)
-
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
-        if mcSteps % nsamples != 0:
-            nsteps.append(mcSteps % nsamples)
-
+        nsteps = utils.partition(nsamples, mcSteps)
+        evol = Evolution(self, nsteps, initial=includeStart)
+        evol.update({"force": force, "mcSteps": mcSteps})
         for nstep in nsteps:
-            energy, _ = self.mcRelaxation(force, E0, nstep)
-            angles.append(np.copy(self.euler))
-            energies.append(energy)
-
+            energy, extension = self.mcRelaxation(force, E0, nstep)
+            evol.save_energy(energy)                                           \
+                .save_extension(extension)                                     \
+                .save_angles(self)
         timers[8] += time.clock() - start
-        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-
-        return {
-            "angles" : np.array(angles),
-            "tsteps" : np.cumsum(nsteps),
-            "timing" : timings,
-            "energies": np.array(energies),
-            "strandLength" : self.strandLength,
-            "rodLength" : self.d,
-        }
+        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        evol.save_timing(timing)
+        return evol.to_dict()
 
 
 class NakedDNAWAcceptanceRatios(NakedDNA):
@@ -383,50 +440,31 @@ class NakedDNAWAcceptanceRatios(NakedDNA):
         for _ in range(mcSteps - 1):
             E0 = NakedDNA.metropolisUpdate(self, force, E0)
             energyList.append(np.sum(E0))
-            xList.append(np.sum(self.tVector()[:, 2]))
+            xList.append(self.totalExtension())
         E0, acc = self.metropolisUpdate(force, E0)
         energyList.append(np.sum(E0))
-        xList.append(np.sum(self.tVector()[:, 2]))
+        xList.append(self.totalExtension())
         return np.array(energyList), np.array(xList), acc
 
     def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
                         twists=2*np.pi, nsamples=1, includeStart=False):
         start = time.clock()
         timers = self.sim.timers
-        energyList = []
-        extensionList = []
-        angles = []
-        acceptance_ratios = []
-
-        if includeStart:
-            angles.append(np.copy(self.euler))
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
-        if mcSteps % nsamples != 0:
-            nsteps.append(mcSteps % nsamples)
-
-        tw = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
-        for x in tw:
+        nsteps = utils.partition(nsamples, mcSteps)
+        tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        evol = Evolution(self, nsteps, twists=tmp_twists, initial=includeStart)
+        for x in tmp_twists:
             for nstep in nsteps:
                 self.euler[-1, 2] = x
                 energy, extension, acc = self.mcRelaxation(force, E0, nstep)
-                energyList.append(energy[-1])
-                extensionList.append(extension[-1])
-                angles.append(np.copy(self.euler))
-                acceptance_ratios.append(acc)
-
+                evol.save_energy(energy)                                       \
+                    .save_extension(extension)                                 \
+                    .save_acceptance(acc)                                      \
+                    .save_angles(self)
         timers[8] += time.clock() - start
-
-        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-
-        return {
-            "energy": energyList,
-            "extension": extensionList,
-            "timing": timings,
-            "angles": np.array(angles),
-            "tsteps": np.cumsum(nsteps * len(tw)),
-            "rodLength": self.d,
-            "acceptance": np.array(acceptance_ratios),
-        }
+        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        evol.save_timing(timing)
+        return evol.to_dict()
 
     def relaxationProtocol(self, force=1.96, E0=None,
                            mcSteps=1000, nsamples=4, includeStart=False):
@@ -437,78 +475,97 @@ class NakedDNAWAcceptanceRatios(NakedDNA):
         """
         start = time.clock()
         timers = self.sim.timers
-
-        energies = []
-        angles = []
-        acceptance_ratios = []
-        if includeStart:
-            angles.append(self.euler)
-
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
-        if mcSteps % nsamples != 0:
-            nsteps.append(mcSteps % nsamples)
-
+        nsteps = utils.partition(nsamples, mcSteps)
+        evol = Evolution(self, nsteps, initial=includeStart)
+        evol.update({"force": force, "mcSteps": mcSteps})
         for nstep in nsteps:
-            energy, _, acc = self.mcRelaxation(force, E0, nstep)
-            angles.append(np.copy(self.euler))
-            energies.append(energy)
-            acceptance_ratios.append(acc)
-
+            energy, extension, acc = self.mcRelaxation(force, E0, nstep)
+            evol.save_energy(energy)                                           \
+                .save_extension(extension)                                     \
+                .save_acceptance(acc)                                          \
+                .save_angles(self)
         timers[8] += time.clock() - start
-        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        evol.save_timing(timing)
+        return evol.to_dict()
 
-        return {
-            "angles": np.array(angles),
-            "tsteps": np.cumsum(nsteps),
-            "timing": timings,
-            "energies": np.array(energies),
-            "strandLength": self.strandLength,
-            "rodLength": self.d,
-            "acceptance": np.array(acceptance_ratios)
-        }
+class DisorderedNakedDNA(NakedDNA):
 
+    def __init__(self, Pinv=1./300, **kwargs):
+        # The 1/300 value has no particular significance.
+        # [1] considers values from ~1/1000 to ~1/100
+        NakedDNA.__init__(self, **kwargs)
+        self.Pinv = Pinv # inverse of P value in 1/nm
+        self.Bm = self.B / (1 - self.B * Pinv)
+        sigma_b = (Pinv * self.d) ** 0.5
+        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)]
+        # see [1, (E1)]
+        xi = np.random.randn(2, self.L - 1)
+        self.bend_zeros = sigma_b * xi
+        # print(self.bend_zeros)
+        self.sim.squared = False
+
+    def bendingEnergyDensity(self, angles=None):
+        if angles is None:
+            angles = self.twistBendAngles()
+        energy_density = self.Bm / (2.0 * self.d) * (
+            (angles[0] - self.bend_zeros[0]) ** 2
+            + (angles[1] - self.bend_zeros[1]) ** 2
+        )
+        return energy_density, angles
+
+class DisorderedNakedDNAWAcceptanceRatios(DisorderedNakedDNA,
+                                          NakedDNAWAcceptanceRatios):
+    pass
 
 class NucleosomeArray(NakedDNA):
-    def __init__(self, nucleosomePos=np.array([]), strandLength=740, **dna_kwargs):
+    def __init__(self, nucPos=np.array([]), strandLength=740, **dna_kwargs):
         """Initialize the nucleosome array in the default 'vertical' configuration.
 
         By vertical configuration, we mean that all rods are vertical except
         the ones immediately 'coming out' of a nucleosome.
 
-        A nucleosome at position `n` is between rods of indices `n-1` and
-        `n` (zero-based).
-        `strandLength` should be specified in nm. It should only include the
+        A nucleosome at position ``n`` is between rods of indices ``n-1`` and
+        ``n`` (zero-based).
+        ``strandLength`` should be specified in nm. It should only include the
         length of the DNA between the nucleosome core(s) plus the spacer at the
         ends. It must **not** include the length of the DNA wrapped around the
         nucleosome core(s).
-        `dna_kwargs` should be specified according to `NakedDNA.__init__`'s
+        ``dna_kwargs`` should be specified according to ``NakedDNA.__init__``'s
         kwargs.
 
-        NOTE: You may want to use `create` instead of calling the constructor
+        NOTE: You may want to use ``create`` instead of calling the constructor
         directly.
         """
         NakedDNA.__init__(self, **dna_kwargs)
         self.strandLength = strandLength
         self.d = strandLength/dna_kwargs["L"]
-        self.nuc = nucleosomePos
+        self.nuc = nucPos
         self.euler[self.nuc] = utils.exitAngles([0., 0., 0.])
+
+    def constants(self):
+        return NakedDNA.constants(self).update({"nucleosomeIndices": self.nuc})
 
     @staticmethod
     def create(nucArrayType, nucleosomeCount=36, basePairsPerRod=10,
-               linker=60, spacer=600):
+               linker=60, spacer=600, kickSize=Simulation.DEFAULT_KICK_SIZE):
         """Initializes a nucleosome array in one of the predefined styles.
 
-        `nucArrayType` takes the values:
+        ``nucArrayType`` takes the values:
         * 'standard' -> nucleosomes arranged roughly vertically
         * 'relaxed'  -> initial twists and bends between rods are zero
-        `linker` and `spacer` are specified in base pairs.
+        ``linker`` and ``spacer`` are specified in base pairs.
         """
         if linker % basePairsPerRod != 0:
-            raise ValueError("Number of rods in linker DNA should be an integer.\n"
-                             "linker value should be divisible by basePairsPerRod.")
+            raise ValueError(
+                "Number of rods in linker DNA should be an integer.\n"
+                "linker value should be divisible by basePairsPerRod."
+            )
         if spacer % basePairsPerRod != 0:
-            raise ValueError("Number of rods in spacers should be an integer.\n"
-                             "spacer value should be divisible by basePairsPerRod.")
+            raise ValueError(
+                "Number of rods in spacers should be an integer.\n"
+                "spacer value should be divisible by basePairsPerRod."
+            )
         # 60 bp linker between cores
         #           |-|           600 bp spacers on either side
         # ~~~~~~~~~~O~O~O...O~O~O~~~~~~~~~~
@@ -517,8 +574,8 @@ class NucleosomeArray(NakedDNA):
         strandLength = float(np.sum(basePairArray) * basePairLength)
         numRods = np.array(basePairArray) // basePairsPerRod
         L = int(np.sum(numRods))
-        nucleosomePos = np.cumsum(numRods)[:-1]
-        dna = NucleosomeArray(L=L, nucleosomePos=nucleosomePos,
+        nucPos = np.cumsum(numRods)[:-1]
+        dna = NucleosomeArray(L=L, nucPos=nucPos,
                               strandLength=strandLength, kickSize=kickSize)
 
         if nucArrayType == "standard":
@@ -526,11 +583,11 @@ class NucleosomeArray(NakedDNA):
         elif nucArrayType == "relaxed":
             prev = np.array([0., 0., 0.])
             for i in range(L):
-                if nucleosomePos.size != 0 and i == nucleosomePos[0]:
+                if nucPos.size != 0 and i == nucPos[0]:
                     tmp = utils.exitAngles(prev)
                     dna.euler[i] = np.copy(tmp)
                     prev = tmp
-                    nucleosomePos = nucleosomePos[1:]
+                    nucPos = nucPos[1:]
                 else:
                     dna.euler[i] = np.copy(prev)
         else:
@@ -592,7 +649,7 @@ class NucleosomeArray(NakedDNA):
     def torsionProtocol(self, **kwargs):
         """Twisting a nucleosome array from one end.
 
-        See `NakedDNA.torsionProtocol` for kwargs.
+        See ``NakedDNA.torsionProtocol`` for kwargs.
         """
         result = NakedDNA.torsionProtocol(self, **kwargs)
         result["nucleosome"] = self.nuc
@@ -607,35 +664,21 @@ class NucleosomeArray(NakedDNA):
         """
         start = time.clock()
         timers = self.sim.timers
-        energies = []
-        angles = []
+        nsteps = utils.partition(nsamples, mcSteps)
         dummyRodAngles = []
-        if includeStart:
-            angles.append(np.copy(self.euler))
-            if includeDummyRods:
-                dummyRodAngles.append(np.copy(self.anglesForDummyRods()))
-
-        nsteps = [mcSteps // nsamples] * nsamples if mcSteps >= nsamples else []
-        if mcSteps % nsamples != 0:
-            nsteps.append(mcSteps % nsamples)
-
+        evol = Evolution(self, nsteps, initial=includeStart)
+        if includeStart and includeDummyRods:
+            dummyRodAngles.append(self.anglesForDummyRods())
         for nstep in nsteps:
-            energy, _ = self.mcRelaxation(force, E0, nstep)
-            angles.append(np.copy(self.euler))
-            energies.append(energy)
+            energy, extension = self.mcRelaxation(force, E0, nstep)
+            evol.save_energy(energy)                                           \
+                .save_extension(extension)                                     \
+                .save_angles(self)
             if includeDummyRods:
                 dummyRodAngles.append(self.anglesForDummyRods())
-
         timers[8] += time.clock() - start
-        timings = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-
-        return {
-            "angles" : np.array(angles),
-            "tsteps" : np.cumsum(nsteps),
-            "timing" : timings,
-            "energies" : np.array(energies),
-            "nucleosome" : self.nuc,
-            "strandLength" : self.strandLength,
-            "dummyRodAngles" : np.array(dummyRodAngles),
-            "rodLength" : self.d,
-        }
+        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
+        evol.save_timing(timing)
+        if dummyRodAngles:
+            evol.update({"dummyRodAngles": np.array(dummyRodAngles)})
+        return evol.to_dict()
