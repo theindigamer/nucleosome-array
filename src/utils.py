@@ -1,6 +1,42 @@
 import numpy as np
 from numba import jit
 
+@jit(cache=True, nopython=True)
+def rotation_matrices(euler):
+    """Computes rotation matrices element-wise.
+
+    Assumes: indices 0, 1 and 2 ↔ phi, theta, psi.
+    """
+    l = len(euler)
+    R = np.empty((l, 3, 3))
+    for i in range(l):
+        phi = euler[i][0]
+        theta = euler[i][1]
+        psi = euler[i][2]
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        cos_psi = np.cos(psi)
+        sin_psi = np.sin(psi)
+        R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
+        R[i, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
+        R[i, 0, 2] = sin_theta * sin_phi
+        R[i, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
+        R[i, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
+        R[i, 1, 2] = cos_phi * sin_theta
+        R[i, 2, 0] = sin_theta * sin_psi
+        R[i, 2, 1] = -cos_psi * sin_theta
+        R[i, 2, 2] = cos_theta
+    return R
+
+def partition(n_parts, total):
+    arr = np.array([total // n_parts] * n_parts if total >= n_parts else [])
+    rem = total % n_parts
+    if rem != 0:
+        return np.append(arr, rem)
+    return arr
+
 def smart_arange(start, stop, step, incl=True):
     s = step if (stop - start) * step > 0 else -step
     return np.arange(start, stop + (s if incl else 0.0), s)
