@@ -1,10 +1,13 @@
 import dnaMC
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
 from numpy import log10, sqrt
+import pandas as pd
 import scipy
 from scipy.optimize import curve_fit
+import xarray as xr
 
 import json
 import pickle
@@ -191,6 +194,180 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
         })
         results.append(res.copy())
     return results
+
+
+def marko_siggia_curve(B, strandLength):
+    # B is expressed in nm kT so Lp = B/kT -> Lp = B
+    kT = 1
+    Lp = B
+    L0 = strandLength
+    def f(x):
+        return (kT/Lp) * (1 / (4 * (1 - x/L0)**2) - 1/4 + x/L0)
+    xs = np.arange(0, strandLength, 5)
+    return (xs, f(xs))
+
+
+def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
+                      disordered=True, acceptance=True, demo=False):
+    """Compute force vs extension and optionally acceptance vs force.
+
+    ``forces`` is some nonempty iterable with the desired force values to use.
+    Similarly for ``kickSizes``. If ``kickSizes`` contains more than one
+    element, multiple graphs are draw side-by-side.
+    ``disordered`` creates "disordered" DNA, i.e., the zeros of bending energy
+    are randomly shifted from zero physical bend.
+    ``acceptance=True`` shows the acceptance ratios for different forces after
+    thermalization.
+    ``demo`` is provided for quickly debugging the drawing code without
+    worrying about the actual physical values.
+    """
+    L = 192
+    B = 35.0
+    kickSizes_arr = np.array(kickSizes)
+    forces_arr = np.array(forces)
+
+    if demo:
+        pre_steps = 10
+        runs = 3
+        extra_steps = 10
+        nsamples = 2
+    else:
+        pre_steps = 1000
+        runs = 5
+        extra_steps = 1000
+        nsamples = 10
+    runs_arr = np.array(range(runs))
+    nsamples_arr = np.array(range(nsamples))
+
+    if disordered:
+        Pinv = 1/150
+        if acceptance:
+            dnaClass = dnaMC.DisorderedNakedDNAWAcceptanceRatios
+        else:
+            dnaClass = dnaMC.DisorderedNakedDNA
+        opt_kwargs = {'Pinv': Pinv}
+    else:
+        Pinv = 0
+        if acceptance:
+            dnaClass = dnaMC.NakedDNAWAcceptanceRatios
+        else:
+            dnaClass = dnaMC.NakedDNA
+        opt_kwargs = {}
+
+    tot = kickSizes_arr.size * forces_arr.size
+    i = 0
+    print(' {0} out of {1}'.format(i, tot), end='', flush=True)
+
+    extension_arr = np.empty(
+        (kickSizes_arr.size, forces_arr.size, runs, nsamples)
+    )
+    if acceptance:
+        # last dimension is 3 for the three angles
+        acceptance_ratio_arr = np.empty(
+            (kickSizes_arr.size, forces_arr.size, runs, nsamples, 3)
+        )
+
+    for ((j_ks, kickSize), (j_f, force)) in itertools.product(
+            enumerate(kickSizes), enumerate(forces)
+    ):
+        for j_r in range(runs):
+            dna = dnaClass(L=L, kickSize=kickSize, B=B,
+                           T=dnaMC.Environment.roomTemp, **opt_kwargs)
+            # TODO: add capability in relaxationProtocol to set nsamples=0
+            res = dna.relaxationProtocol(force=force, mcSteps=pre_steps,
+                                         nsamples=1)
+            res = dna.relaxationProtocol(force=force, mcSteps=extra_steps,
+                                         nsamples=nsamples)
+            extension = np.linalg.norm(res["extension"], axis=1)
+            extension_arr[j_ks, j_f, j_r] = extension
+            if acceptance:
+                acceptance_ratio_arr[j_ks, j_f, j_r, :, :] = res["acceptance"]
+        i += 1
+        print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
+
+    extension_ds = xr.DataArray(
+        extension_arr,
+        dims=["kickSize", "force", "run", "sample"],
+        coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr],
+        attrs={"L": L, "B": B, "Pinv": Pinv,
+               "pre_steps": pre_steps, "extra_steps": extra_steps}
+    )
+
+    if acceptance:
+        angles_str = ["φ", "θ", "ψ"]
+        acceptance_ratio_ds = xr.DataArray(
+            acceptance_ratio_arr,
+            dims=["kickSize", "force", "run", "sample", "angle"],
+            coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr, angles_str]
+        )
+        return (extension_ds, acceptance_ratio_ds)
+
+    return extension_ds
+
+
+def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
+    kickSizes = extension_ds.coords["kickSize"].values
+    forces = extension_ds.coords["force"].values
+    runs = extension_ds.coords["run"].values[-1] + 1
+    nsamples = extension_ds.coords["sample"].values[-1] + 1
+    B = extension_ds.attrs["B"]
+    L = extension_ds.attrs["L"]
+    Pinv = extension_ds.attrs["Pinv"]
+    pre_steps = extension_ds.attrs["pre_steps"]
+    extra_steps = extension_ds.attrs["extra_steps"]
+
+    acceptance = not acceptance_ratio_ds is None
+    fig, axes = plt.subplots(
+        nrows=(2 if acceptance else 1),
+        ncols=kickSizes.size,
+        sharex="row",
+        sharey="row",
+    )
+    # this is needed for annoying edge cases when either len(kickSizes) == 1 or
+    # acceptance is turned off, which reduce the dimensionality of axes :(
+    axes = np.reshape(axes, (2 if acceptance else 1, len(kickSizes)))
+
+    sns.set_style("darkgrid")
+    ms_curve_x, ms_curve_y = marko_siggia_curve(B, 740)
+    for (j, ks) in enumerate(kickSizes):
+        tmp = extension_ds.sel(kickSize=ks)
+        mean, stdev = (lambda x: (x.mean(), x.std()))(tmp.groupby("force"))
+        axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
+                            capsize=4.0, linestyle='')
+        axes[0, j].plot(ms_curve_x, ms_curve_y)
+        axes[0, j].set_xlim(left=500, right=750)
+        axes[0, j].set_ylim(bottom=-0.5, top=10+0.5)
+        axes[0, j].set_title("kick size = {0}".format(ks))
+        axes[0, j].set_xlabel("")
+        axes[0, j].set_ylabel("")
+    axes[0, 0].set_ylabel("Force (pN)")
+    axes[0, kickSizes.size//2].set_xlabel("Extension (nm)")
+
+    if acceptance:
+        angles_str = ["φ", "θ", "ψ"]
+        for (j, ks) in enumerate(kickSizes):
+            tmp = acceptance_ratio_ds.sel(kickSize=ks)
+            for angle in angles_str:
+                mean, stdev = (lambda x: (x.mean(), x.std()))(
+                    tmp.sel(angle=angle).groupby("force")
+                )
+                axes[1, j].errorbar(forces, mean.values, yerr=stdev.values,
+                                    label=angle)
+                axes[1, j].set_ylim(bottom=0, top=1)
+            axes[1, 0].set_ylabel("Acceptance ratio")
+            axes[1, kickSizes.size//2].set_xlabel("Force (pN)")
+
+    fig.suptitle(
+        ("Contour length (straight) L_0 = 740 nm, #rods = {6}\n"
+         "Effective persistence length Lp = {5:.1f} nm, "
+         "Intrinsic disorder persistence length P = {0:.1f} nm\n"
+         "Thermalization steps = {1}, extra steps = {2}, "
+         "#samples in extra steps = {3}, runs = {4}").format(
+             1/Pinv if Pinv != 0 else np.inf, pre_steps,
+             extra_steps, nsamples, runs, B, L),
+        fontdict = {"fontsize": 10})
+    plt.legend(loc="upper right")
+    plt.show(block=False)
 
 
 #---------------------#
