@@ -185,7 +185,7 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
         kwargs.update({
             "T": T,
             "kickSize": kickSize,
-            "dnaClass": dnaMC.NakedDNAWAcceptanceRatios,
+            "dnaClass": dnaMC.NakedDNA,
         })
         _, res = testDiffusion(*args, **kwargs)
         res.update({
@@ -208,7 +208,7 @@ def marko_siggia_curve(B, strandLength):
 
 
 def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
-                      disordered=True, acceptance=True, demo=False, runs=5):
+                      disordered=True, demo=False, runs=5):
     """Compute force vs extension and optionally acceptance vs force.
 
     ``forces`` is some nonempty iterable with the desired force values to use.
@@ -216,8 +216,6 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     element, multiple graphs are draw side-by-side.
     ``disordered`` creates "disordered" DNA, i.e., the zeros of bending energy
     are randomly shifted from zero physical bend.
-    ``acceptance=True`` shows the acceptance ratios for different forces after
-    thermalization.
     ``demo`` is provided for quickly debugging the drawing code without
     worrying about the actual physical values.
     ``runs`` fixes the number of runs for sampling. If ``demo`` is ``True``,
@@ -243,16 +241,10 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     if disordered:
         Pinv = 1/150
-        if acceptance:
-            dnaClass = dnaMC.DisorderedNakedDNAWAcceptanceRatios
-        else:
             dnaClass = dnaMC.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
     else:
         Pinv = 0
-        if acceptance:
-            dnaClass = dnaMC.NakedDNAWAcceptanceRatios
-        else:
             dnaClass = dnaMC.NakedDNA
         opt_kwargs = {}
 
@@ -263,11 +255,10 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     extension_arr = np.empty(
         (kickSizes_arr.size, forces_arr.size, runs, nsamples)
     )
-    if acceptance:
-        # last dimension is 3 for the three angles
-        acceptance_ratio_arr = np.empty(
-            (kickSizes_arr.size, forces_arr.size, runs, nsamples, 3)
-        )
+    # last dimension is 3 for the three angles
+    acceptance_ratio_arr = np.empty(
+        (kickSizes_arr.size, forces_arr.size, runs, nsamples, 3)
+    )
 
     for ((j_ks, kickSize), (j_f, force)) in itertools.product(
             enumerate(kickSizes), enumerate(forces)
@@ -282,8 +273,7 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
                                          nsamples=nsamples)
             extension = np.linalg.norm(res["extension"], axis=1)
             extension_arr[j_ks, j_f, j_r] = extension
-            if acceptance:
-                acceptance_ratio_arr[j_ks, j_f, j_r, :, :] = res["acceptance"]
+            acceptance_ratio_arr[j_ks, j_f, j_r, :, :] = res["acceptance"]
         i += 1
         print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
 
@@ -295,16 +285,13 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
                "pre_steps": pre_steps, "extra_steps": extra_steps}
     )
 
-    if acceptance:
-        angles_str = ["φ", "θ", "ψ"]
-        acceptance_ratio_ds = xr.DataArray(
-            acceptance_ratio_arr,
-            dims=["kickSize", "force", "run", "sample", "angle"],
-            coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr, angles_str]
-        )
-        return (extension_ds, acceptance_ratio_ds)
-
-    return extension_ds
+    angles_str = ["φ", "θ", "ψ"]
+    acceptance_ratio_ds = xr.DataArray(
+        acceptance_ratio_arr,
+        dims=["kickSize", "force", "run", "sample", "angle"],
+        coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr, angles_str]
+    )
+    return (extension_ds, acceptance_ratio_ds)
 
 
 def draw_force_extension(extension_ds, acceptance_ratio_ds=None):

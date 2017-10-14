@@ -41,7 +41,7 @@ class Simulation:
 
 class Evolution:
     """Records the evolution of a DNA strand and simulation parameters."""
-    def __init__(self, dna, nsteps, twists=None, initial=False, accept_p=False):
+    def __init__(self, dna, nsteps, twists=None, initial=False):
         """Initialize an evolution object.
 
         ``twists`` is either a nonempty ``numpy`` array (twisting) or ``None``
@@ -54,6 +54,7 @@ class Evolution:
         So ``twists = [0, pi/2]`` and ``nsteps=[10, 10, 5]`` implies there are
         50 MC steps in total, split up as 10, 10, 5, 10, 10, 5.
         """
+        self.initial = initial
         self.nstep_i = 0
         self.tstep_i = 0
         if twists is None:
@@ -69,7 +70,7 @@ class Evolution:
             "angles": np.empty((tsteps.size, dna.L, 3)),
             "extension": np.empty((tsteps.size, 3)),
             "energy": np.empty(tsteps.size),
-            "acceptance": (None if accept_p else np.empty((nsteps.size, 3))),
+            "acceptance": np.empty((nsteps.size, 3)),
         })
         if isinstance(dna, NucleosomeArray):
             self.data.update({"nucleosome": np.array(dna.nuc)})
@@ -88,11 +89,11 @@ class Evolution:
         return self
 
     def save_extension(self, extension):
-        self.data["extension"][self.tstep_i] = extension[-1]
+        self.data["extension"][self.tstep_i] = extension
         return self
 
     def save_energy(self, energy):
-        self.data["energy"][self.tstep_i] = energy[-1]
+        self.data["energy"][self.tstep_i] = energy
         return self
 
     def save_timing(self, timing):
@@ -273,7 +274,7 @@ class NakedDNA:
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
-    def metropolisUpdate(self, force=1.96, E0=None):
+    def metropolisUpdate(self, force, E0, acceptance=False):
         """ Updates dnaClass Euler angles using Metropolis algorithm.
         Returns the total energy density.
         Temperature T is in Kelvin.
@@ -281,11 +282,10 @@ class NakedDNA:
         sigma = self.sim.kickSize
         timers = self.sim.timers
 
-        if E0 is None:
-            E0 = self.totalEnergyDensity(force=force)
-
         moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
         moves[np.abs(moves) >= 5.0*sigma] = 0
+        if acceptance:
+            accepted_frac = np.zeros(3)
 
         for i in range(3):
             start = time.clock()
@@ -305,6 +305,8 @@ class NakedDNA:
             utils.metropolis(reject, deltaE, even=False)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
+            if acceptance:
+                accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
             timers[0] += time.clock() - start
 
             # Move odd rods now.
@@ -316,29 +318,38 @@ class NakedDNA:
             utils.metropolis(reject, deltaE, even=True)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
+            if acceptance:
+                accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
 
+        if acceptance:
+            return E0, accepted_fraction
         return E0
 
     def totalExtension(self):
         """Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
         return self.d * np.sum(self.tVector(), axis=0)
 
-    def mcRelaxation(self, force=1.96, E0=None, mcSteps=100):
-        """ Monte Carlo relaxation using Metropolis algorithm. """
-        energyList = []
-        xList = []
-        if E0 is None:
-            E0 = self.totalEnergyDensity(force=force )
-        energyList.append( np.sum( E0 ) )
-        for _ in range(mcSteps):
-            E0 = self.metropolisUpdate(force, E0)
-            energyList.append(np.sum(E0))
-            xList.append(self.totalExtension())
-        return np.array(energyList), np.array(xList)
+    def mcRelaxation(self, force, E0, mcSteps, record_final_only=True):
+        """Monte Carlo relaxation using Metropolis algorithm."""
+        if record_final_only:
+            for _ in range(mcSteps - 1):
+                E0 = self.metropolisUpdate(force, E0, acceptance=False)
+            E0, acc = self.metropolisUpdate(force, E0, acceptance=True)
+            return E0, self.totalExtension(), acc
+        else:
+            energies = np.empty(mcSteps)
+            extensions = np.empty(mcSteps)
+            acceptance_ratios = np.empty((mcSteps, 3))
+            for i in range(mcSteps):
+                E0, acceptance_ratios[i] = (
+                    self.metropolisUpdate(force, E0, acceptance=True)
+                )
+                energies[i] = E0
+                extensions[i] = self.totalExtension()
+            return energies, extensions, acceptance_ratios
 
     def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
-                        twists=2*np.pi, nsamples=1,
-                        includeStart=False):
+                        twists=2*np.pi, nsamples=1, includeStart=False):
         """Simulate a torsion protocol defined by twists.
 
         The twists argument can be described in several ways:
@@ -360,9 +371,11 @@ class NakedDNA:
         for x in tmp_twists:
             for nstep in nsteps:
                 self.euler[-1, 2] = x
-                energy, extension = self.mcRelaxation(force, E0, nstep)
+                energy, extension, acceptance = self.mcRelaxation(force, E0,
+                                                                  nstep)
                 evol.save_energy(energy)                                       \
                     .save_extension(extension)                                 \
+                    .save_acceptance(acceptance)                               \
                     .save_angles(self)
         timers[8] += time.clock() - start
         timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
@@ -382,118 +395,16 @@ class NakedDNA:
         evol = Evolution(self, nsteps, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
         for nstep in nsteps:
-            energy, extension = self.mcRelaxation(force, E0, nstep)
+            energy, extension, acceptance = self.mcRelaxation(force, E0, nstep)
             evol.save_energy(energy)                                           \
                 .save_extension(extension)                                     \
+                .save_acceptance(acceptance)                                   \
                 .save_angles(self)
         timers[8] += time.clock() - start
         timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
         evol.save_timing(timing)
         return evol.to_dict()
 
-
-class NakedDNAWAcceptanceRatios(NakedDNA):
-
-    def metropolisUpdate(self, force=1.96, E0=None):
-        """ Updates dnaClass Euler angles using Metropolis algorithm.
-        Returns the total energy density.
-        Temperature T is in Kelvin.
-        """
-        sigma = self.sim.kickSize
-        timers = self.sim.timers
-
-        if E0 is None:
-            E0 = self.totalEnergyDensity(force=force)
-
-        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
-        moves[np.abs(moves) >= 5.0*sigma] = 0
-
-        accepted_fraction = np.zeros(3)
-
-        for i in range(3):
-            start = time.clock()
-            self.euler[1:-1, i] += moves[:, i] * self.oddMask
-            Ef = self.totalEnergyDensity(force=force)
-            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
-            timers[1] += time.clock() - start
-
-            reject = 1.0 * self.oddMask
-            utils.metropolis(reject, deltaE, even=False)
-            self.euler[1:-1,i] -= moves[:, i] * reject
-            E0 = self.totalEnergyDensity(force=force)
-            accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
-            timers[0] += time.clock() - start
-
-            self.euler[1:-1, i] += moves[:, i] * self.evenMask
-            Ef = self.totalEnergyDensity(force=force)
-            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
-
-            reject = 1.0 * self.evenMask
-            utils.metropolis(reject, deltaE, even=True)
-            self.euler[1:-1,i] -= moves[:, i] * reject
-            E0 = self.totalEnergyDensity(force=force)
-            accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
-
-        return E0, accepted_fraction
-
-    def mcRelaxation(self, force=1.96, E0=None, mcSteps=100):
-        """ Monte Carlo relaxation using Metropolis algorithm. """
-        energyList = []
-        xList = []
-        if E0 is None:
-            E0 = self.totalEnergyDensity(force=force)
-        energyList.append( np.sum( E0 ) )
-        for _ in range(mcSteps - 1):
-            E0 = NakedDNA.metropolisUpdate(self, force, E0)
-            energyList.append(np.sum(E0))
-            xList.append(self.totalExtension())
-        E0, acc = self.metropolisUpdate(force, E0)
-        energyList.append(np.sum(E0))
-        xList.append(self.totalExtension())
-        return np.array(energyList), np.array(xList), acc
-
-    def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
-                        twists=2*np.pi, nsamples=1, includeStart=False):
-        start = time.clock()
-        timers = self.sim.timers
-        nsteps = utils.partition(nsamples, mcSteps)
-        tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
-        evol = Evolution(self, nsteps, twists=tmp_twists, initial=includeStart)
-        for x in tmp_twists:
-            for nstep in nsteps:
-                self.euler[-1, 2] = x
-                energy, extension, acc = self.mcRelaxation(force, E0, nstep)
-                evol.save_energy(energy)                                       \
-                    .save_extension(extension)                                 \
-                    .save_acceptance(acc)                                      \
-                    .save_angles(self)
-        timers[8] += time.clock() - start
-        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-        evol.save_timing(timing)
-        return evol.to_dict()
-
-    def relaxationProtocol(self, force=1.96, E0=None,
-                           mcSteps=1000, nsamples=4, includeStart=False):
-        """
-        Simulate a relaxation for an initial twist profile.
-
-        The DNA should be specified with the required profile already applied.
-        """
-        start = time.clock()
-        timers = self.sim.timers
-        nsteps = utils.partition(nsamples, mcSteps)
-        evol = Evolution(self, nsteps, initial=includeStart)
-        evol.update({"force": force, "mcSteps": mcSteps})
-        for nstep in nsteps:
-            energy, extension, acc = self.mcRelaxation(force, E0, nstep)
-            evol.save_energy(energy)                                           \
-                .save_extension(extension)                                     \
-                .save_acceptance(acc)                                          \
-                .save_angles(self)
-        timers[8] += time.clock() - start
-        timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
-        evol.save_timing(timing)
-        return evol.to_dict()
 
 class DisorderedNakedDNA(NakedDNA):
 
@@ -519,9 +430,6 @@ class DisorderedNakedDNA(NakedDNA):
         )
         return energy_density, angles
 
-class DisorderedNakedDNAWAcceptanceRatios(DisorderedNakedDNA,
-                                          NakedDNAWAcceptanceRatios):
-    pass
 
 class NucleosomeArray(NakedDNA):
     def __init__(self, nucPos=np.array([]), strandLength=740, **dna_kwargs):
@@ -675,9 +583,10 @@ class NucleosomeArray(NakedDNA):
         if includeStart and includeDummyRods:
             dummyRodAngles.append(self.anglesForDummyRods())
         for nstep in nsteps:
-            energy, extension = self.mcRelaxation(force, E0, nstep)
+            energy, extension, acceptance = self.mcRelaxation(force, E0, nstep)
             evol.save_energy(energy)                                           \
                 .save_extension(extension)                                     \
+                .save_acceptance(acceptance)                                   \
                 .save_angles(self)
             if includeDummyRods:
                 dummyRodAngles.append(self.anglesForDummyRods())
