@@ -2,6 +2,15 @@ import numpy as np
 from numba import jit
 
 @jit(cache=True, nopython=True)
+def metropolis(reject, deltaE, even=True):
+    """Updates reject in-place using the Metropolis algorithm."""
+    for i in range(0 if even else 1, reject.size, 2):
+        if deltaE[i] < 0:
+            reject[i] = 0.
+        elif deltaE[i] < 16 and np.exp(-deltaE[i]) > np.random.rand():
+            reject[i] = 0.
+
+@jit(cache=True, nopython=True)
 def rotation_matrices(euler):
     """Computes rotation matrices element-wise.
 

@@ -8,6 +8,7 @@ class Environment:
     Future properties one might include: salt/ion concentration etc.
     """
     roomTemp = 293.15 # in Kelvin
+    minTemp = 1E-10   # in Kelvin
     def __init__(self, T=roomTemp):
         self.T = T
 
@@ -58,7 +59,7 @@ class Evolution:
         if twists is None:
             tsteps = np.cumsum(nsteps)
         else:
-            tsteps = np.cumsum(nsteps) * twists.size
+            tsteps = np.tile(np.cumsum(nsteps), len(twists))
         if initial:
             tsteps = np.insert(tsteps, 0, 0)
         self.data = dna.constants()
@@ -224,7 +225,7 @@ class NakedDNA:
             Es = force * tangent * prefactor
             prefactor = 1E-12 1E-9/ (1.38E-23 T).
             Change prefactor to change the temperature."""
-        T = self.env.T if self.env.T != 0.0 else Environment.roomTemp
+        T = max(self.env.T, Environment.minTemp)
         prefactor = 1.0 / (1.38E-2 * T)
         if tangent is None:
             tangent = self.tVector()
@@ -288,24 +289,31 @@ class NakedDNA:
 
         for i in range(3):
             start = time.clock()
+            # Move even rods first.
+            # oddMask is False, True, False, ... and we start from euler[1]
+            # so only euler[2], euler[4], ... are changed
             self.euler[1:-1, i] += moves[:, i] * self.oddMask
             Ef = self.totalEnergyDensity(force=force)
             deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
             timers[1] += time.clock() - start
 
+            # 1.0 ⇔ true ⇔ move is rejected, first reject all moves of even rods
             reject = 1.0 * self.oddMask
-            # energy is in units of kT, 0.368 = exp(-1)
-            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            # Now reject == [0., 1., 0., 1., ...]
+            # Wait! Some of these should be accepted according to the Metropolis
+            # algorithm. We only need to examine _odd_ indices of reject.
+            utils.metropolis(reject, deltaE, even=False)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
             timers[0] += time.clock() - start
 
+            # Move odd rods now.
             self.euler[1:-1, i] += moves[:, i] * self.evenMask
             Ef = self.totalEnergyDensity(force=force)
             deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
             reject = 1.0 * self.evenMask
-            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            utils.metropolis(reject, deltaE, even=True)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
 
@@ -410,9 +418,7 @@ class NakedDNAWAcceptanceRatios(NakedDNA):
             timers[1] += time.clock() - start
 
             reject = 1.0 * self.oddMask
-            # energy is in units of kT, 0.368 = exp(-1)
-            # 0 ⇔ move is accepted
-            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            utils.metropolis(reject, deltaE, even=False)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
             accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
@@ -423,7 +429,7 @@ class NakedDNAWAcceptanceRatios(NakedDNA):
             deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
 
             reject = 1.0 * self.evenMask
-            reject[deltaE <= (0 if self.env.T == 0 else 0.368)] = 0
+            utils.metropolis(reject, deltaE, even=True)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force=force)
             accepted_fraction[i] += 0.5 - np.count_nonzero(reject)/(self.L - 2)
@@ -502,7 +508,6 @@ class DisorderedNakedDNA(NakedDNA):
         # see [1, (E1)]
         xi = np.random.randn(2, self.L - 1)
         self.bend_zeros = sigma_b * xi
-        # print(self.bend_zeros)
         self.sim.squared = False
 
     def bendingEnergyDensity(self, angles=None):

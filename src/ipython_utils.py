@@ -21,7 +21,7 @@ import pprint
 # Utility functions #
 #-------------------#
 
-def toListlike(results):
+def _toListlike(results):
     tmp = copy.deepcopy(results)
     for (key, val) in tmp.items():
         if type(val) is np.ndarray:
@@ -48,9 +48,9 @@ def savedata(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def simulate_dna(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1,
-         T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
-         dnaClass=dnaMC.NakedDNA):
+def simulate_dna(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
+                 T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
+                 dnaClass=dnaMC.NakedDNA, runs=5):
     """Twisting a DNA from one end.
 
     Returns a DNA object in the twisted form and a dictionary containing
@@ -208,7 +208,7 @@ def marko_siggia_curve(B, strandLength):
 
 
 def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
-                      disordered=True, acceptance=True, demo=False):
+                      disordered=True, acceptance=True, demo=False, runs=5):
     """Compute force vs extension and optionally acceptance vs force.
 
     ``forces`` is some nonempty iterable with the desired force values to use.
@@ -220,8 +220,10 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     thermalization.
     ``demo`` is provided for quickly debugging the drawing code without
     worrying about the actual physical values.
+    ``runs`` fixes the number of runs for sampling. If ``demo`` is ``True``,
+    this argument is ignored.
     """
-    L = 192
+    L = 128
     B = 35.0
     kickSizes_arr = np.array(kickSizes)
     forces_arr = np.array(forces)
@@ -233,7 +235,7 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         nsamples = 2
     else:
         pre_steps = 1000
-        runs = 5
+        runs = runs
         extra_steps = 1000
         nsamples = 10
     runs_arr = np.array(range(runs))
@@ -322,10 +324,8 @@ def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
         ncols=kickSizes.size,
         sharex="row",
         sharey="row",
+        squeeze=False
     )
-    # this is needed for annoying edge cases when either len(kickSizes) == 1 or
-    # acceptance is turned off, which reduce the dimensionality of axes :(
-    axes = np.reshape(axes, (2 if acceptance else 1, len(kickSizes)))
 
     sns.set_style("darkgrid")
     ms_curve_x, ms_curve_y = marko_siggia_curve(B, 740)
@@ -335,7 +335,7 @@ def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
         axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
                             capsize=4.0, linestyle='')
         axes[0, j].plot(ms_curve_x, ms_curve_y)
-        axes[0, j].set_xlim(left=500, right=750)
+        axes[0, j].set_xlim(right=740)
         axes[0, j].set_ylim(bottom=-0.5, top=10+0.5)
         axes[0, j].set_title("kick size = {0}".format(ks))
         axes[0, j].set_xlabel("")
