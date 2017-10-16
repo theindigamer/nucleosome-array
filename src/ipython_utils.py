@@ -1,4 +1,5 @@
 import dnaMC
+import utils
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -16,7 +17,6 @@ import copy
 import itertools
 import pprint
 
-
 #-------------------#
 # Utility functions #
 #-------------------#
@@ -30,11 +30,10 @@ def _toListlike(results):
 
 
 def totalTime(result):
-    return result["timing"]["Total time"]
-
+    return result.attrs["timing"]["Total time"]
 
 def savedata(results, fname):
-    tmp = toListlike(results)
+    tmp = _toListlike(results)
     if fname.endswith(".pckl"):
         with open(fname, "wb") as f:
             pickle.dump(tmp, f)
@@ -48,18 +47,32 @@ def savedata(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def simulate_dna(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
-                 T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
-                 dnaClass=dnaMC.NakedDNA, runs=5):
+def _simulate_dna(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
+                  T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
+                  dnaClass=dnaMC.NakedDNA):
+    dna = dnaClass(L=L, T=T, kickSize=kickSize)
+    result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+                                 mcSteps=mcSteps, nsamples=nsamples)
+    return (dna, result)
+
+def simulate_dna(runs=5, **kwargs):
     """Twisting a DNA from one end.
 
     Returns a DNA object in the twisted form and a dictionary containing
     relevant parameters.
     """
-    dna = dnaClass(L=L, T=T, kickSize=kickSize)
-    result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
-                                 mcSteps=mcSteps, nsamples=nsamples)
-    return (dna, result)
+    dnas = []
+    results = []
+    for _ in range(runs):
+        d, r = _simulate_dna(**kwargs)
+        dnas = [d] + dnas
+        results = [r] + results
+    results = utils.concat_datasets(
+        results,
+        ["angles", "extension", "energy", "acceptance", "timing"],
+        new_key="run"
+    )
+    return (dnas, results)
 
 def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
@@ -241,11 +254,11 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     if disordered:
         Pinv = 1/150
-            dnaClass = dnaMC.DisorderedNakedDNA
+        dnaClass = dnaMC.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
     else:
         Pinv = 0
-            dnaClass = dnaMC.NakedDNA
+        dnaClass = dnaMC.NakedDNA
         opt_kwargs = {}
 
     tot = kickSizes_arr.size * forces_arr.size

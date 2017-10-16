@@ -1,6 +1,66 @@
 import numpy as np
 from numba import jit
+from copy import deepcopy
+import xarray as xr
 
+#-------------------#
+# Data manipulation #
+#-------------------#
+
+def concat_datasets(datasets, concat_keys, concat_attrs=[], new_key="run",
+                    new_key_vals=None):
+    """Concatentate multiple datasets by adding a new coordinate.
+
+    The primary use for this function will be combining datasets across multiple
+    runs. That way one can simply write a function ``foo`` that does 1 run of a
+    simulation, and another helper function which simply calls ``foo`` n times,
+    collects all the datasets in a list, and combines them using this function,
+    instead of separately implementing multiple run functionality for every
+    simulation.
+
+    Args:
+        datasets (List[xarray.Dataset]): Datasets that are to be concatenated.
+        concat_keys (List[str]): Data variables that should be concatentated.
+        concat_attrs (List[str]): Attributes that should be concatentated.
+        new_key (str): The new coordinate for concatenation.
+        new_keys_vals (List[T]): Values that the new coordinate should take.
+
+    Returns:
+        A new dataset representing the desired concatentation.
+
+    Note:
+        * You can also use numpy arrays instead of lists.
+        * Lists of length 1 should be used if needed instead of "unwrapping".
+    """
+    if new_key_vals is None:
+        new_key_vals = np.arange(len(datasets))
+    else:
+        if len(new_key_vals) != len(datasets):
+            raise ValueError("The length of new_keys_vals should be equal to"
+                             " that of datasets.")
+    common_keys = []
+    for k in datasets[0].data_vars.keys():
+        if not k in concat_keys:
+            common_keys = [k] + common_keys
+    common_attrs = []
+    for k in datasets[0].attrs.keys():
+        if not k in concat_attrs:
+            common_attrs = [k] + common_attrs
+    data_vars = {k: datasets[0].data_vars[k] for k in common_keys}
+    coords = deepcopy(datasets[0].coords)
+    coords.update({new_key: new_key_vals})
+    attrs = attrs = {k: datasets[0].attrs[k] for k in common_attrs}
+    for k in concat_keys:
+        data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_key)
+        data_vars.update({k: data_array})
+    for k in concat_attrs:
+        attr = np.concatenate([ds.attrs[k] for ds in datasets])
+        attrs.update({k: attr})
+    return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+
+#------------------------------#
+# Simulation utility functions #
+#------------------------------#
 @jit(cache=True, nopython=True)
 def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm."""
