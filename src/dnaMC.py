@@ -3,6 +3,7 @@ import time
 import utils
 import xarray as xr
 
+
 class Environment:
     """Describes the environment of the DNA/nucleosome array.
 
@@ -40,8 +41,10 @@ class Simulation:
         # β^2 and Γ^2 or β and Γ. The former should be more accurate.
         self.squared = True
 
+
 class Evolution:
-    """Records the evolution of a DNA strand and simulation parameters."""
+    """Records simulation parameters and the evolution of a DNA strand."""
+
     def __init__(self, dna, nsteps, twists=None, initial=False):
         """Initialize an evolution object.
 
@@ -123,21 +126,21 @@ class Evolution:
             "timing": (["timing_keys"], timing),
             "force": data["force"],
             "kickSize": data["kickSize"],
+            "Pinv": data["Pinv"],
         }
-        saved_keys = ["twists", "angles", "extension", "energy", "acceptance",
-                      "timing", "force", "kickSize"]
-        if "nucleosome" in data.keys():
-            saved_keys.append("nucleosome")
-            data_vars.update({"nucleosome": data["nucleosome"]})
         coords = {
             "tsteps": data["tsteps"],
-            "angle_str": np.array(["phi", "theta", "psi"]),
-        }
-        saved_keys.append("tsteps")
-        attrs = {
-            "initial": self.initial,
+            "angle_str": ["phi", "theta", "psi"],
+            "axis": ['x', 'y', 'z'],
             "timing_keys": timing_keys,
         }
+        attrs = {
+            "initial": self.initial,
+        }
+        if "nucleosome" in data.keys():
+            attrs.update({"nucleosome": data["nucleosome"]})
+        saved_keys = (list(data_vars.keys()) + list(coords.keys())
+                      + list(attrs.keys()))
         for (k, v) in data.items():
             if not k in saved_keys:
                 attrs.update({k: v})
@@ -149,7 +152,6 @@ class NakedDNA:
     Euler angles are ordered as phi, theta and psi.
     Values of B and C are from [1, Table I].
     [1, (30)] describes the microscopic parameter Bm computed from B.
-    [1, Appendix 1] describes equations related to disorder.
     """
 
     DEFAULT_TWIST_STEP = np.pi/4
@@ -160,7 +162,8 @@ class NakedDNA:
         self.L = L
         # B, Bm and C are in nm kT
         self.B = B
-        self.Bm = B # no disorder
+        self.Pinv = 0 # no intrinsic disorder
+        self.Bm = B
         self.C = C
         self.env = Environment(T=T)
         self.sim = Simulation(kickSize=kickSize)
@@ -174,6 +177,7 @@ class NakedDNA:
         return {
             "temperature": self.env.T,
             "B": self.B,
+            "Pinv": self.Pinv,
             "Bm": self.Bm,
             "C": self.C,
             "rodCount": self.L,
@@ -430,6 +434,7 @@ class NakedDNA:
         nsteps = utils.partition(nsamples, mcSteps)
         evol = Evolution(self, nsteps, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
+        E0 = self.totalEnergyDensity(force)
         for nstep in nsteps:
             E0, extension, acceptance = self.mcRelaxation(force, E0, nstep)
             (evol.save_energy(np.sum(E0))
@@ -444,6 +449,7 @@ class NakedDNA:
 
 class DisorderedNakedDNA(NakedDNA):
 
+    # [1, Appendix 1] describes equations related to disorder.
     def __init__(self, Pinv=1./300, **kwargs):
         # The 1/300 value has no particular significance.
         # [1] considers values from ~1/1000 to ~1/100
@@ -451,8 +457,7 @@ class DisorderedNakedDNA(NakedDNA):
         self.Pinv = Pinv # inverse of P value in 1/nm
         self.Bm = self.B / (1 - self.B * Pinv)
         sigma_b = (Pinv * self.d) ** 0.5
-        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)]
-        # see [1, (E1)]
+        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)], see [1, (E1)]
         xi = np.random.randn(2, self.L - 1)
         self.bend_zeros = sigma_b * xi
         self.sim.squared = False
@@ -611,6 +616,7 @@ class NucleosomeArray(NakedDNA):
         evol = Evolution(self, nsteps, initial=includeStart)
         if includeStart and includeDummyRods:
             dummyRodAngles.append(self.anglesForDummyRods())
+        E0 = self.totalEnergyDensity(force)
         for nstep in nsteps:
             E0, extension, acceptance = self.mcRelaxation(force, E0, nstep)
             (evol.save_energy(np.sum(E0))

@@ -1,15 +1,15 @@
 import numpy as np
 from numba import jit
-from copy import deepcopy
 import xarray as xr
+from copy import copy
 
 #-------------------#
 # Data manipulation #
 #-------------------#
 
-def concat_datasets(datasets, concat_keys, concat_attrs=[], new_key="run",
-                    new_key_vals=None):
-    """Concatentate multiple datasets by adding a new coordinate.
+def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
+                    concat_attrs=[]):
+    """Concatentate multiple datasets by adding new dimensions.
 
     The primary use for this function will be combining datasets across multiple
     runs. That way one can simply write a function ``foo`` that does 1 run of a
@@ -18,49 +18,77 @@ def concat_datasets(datasets, concat_keys, concat_attrs=[], new_key="run",
     instead of separately implementing multiple run functionality for every
     simulation.
 
+    This function is somewhat like an n-dimensional generalization of
+    ``xarray``'s ``concat`` function.
+
     Args:
-        datasets (List[xarray.Dataset]): Datasets that are to be concatenated.
-        concat_keys (List[str]): Data variables that should be concatentated.
-        concat_attrs (List[str]): Attributes that should be concatentated.
-        new_key (str): The new coordinate for concatenation.
-        new_keys_vals (List[T]): Values that the new coordinate should take.
+        datasets (List[xarray.Dataset]): Datasets to be concatenated.
+        concat_data_vars (List[str]): Data variables to be concatentated.
+        new_dims (List[str]): The new dimensions for concatenation.
+        new_coords (List[List[T]]): New coordinates for each new dimension.
+        concat_attrs (List[str]): Attributes to be concatentated.
 
     Returns:
-        A new dataset representing the desired concatentation.
+        A new dataset representing the desired concatenation.
 
     Note:
         * You can also use numpy arrays instead of lists.
-        * Lists of length 1 should be used if needed instead of "unwrapping".
+        * Lists of length 1 should be used if needed instead of "unwrapping";
+          the latter may give unexpected results.
     """
-    if new_key_vals is None:
-        new_key_vals = np.arange(len(datasets))
-    else:
-        if len(new_key_vals) != len(datasets):
-            raise ValueError("The length of new_keys_vals should be equal to"
-                             " that of datasets.")
-    common_keys = []
+    if len(new_dims) != len(new_coords):
+        raise ValueError("The number of dimensions should be equal to the"
+                         " number of coordinate lists. This mismatch might have"
+                         " happened if you forgot to wrap new_dims or"
+                         " new_coords in a list.")
+    lens = tuple(map(len, new_coords))
+
+    # Some data variables and attributes are shared across datasets, so these
+    # will not get a nested structure.
+    common_data_vars = []
     for k in datasets[0].data_vars.keys():
-        if not k in concat_keys:
-            common_keys = [k] + common_keys
+        if not (k in concat_data_vars or k in new_dims):
+            common_data_vars = [k] + common_data_vars
     common_attrs = []
     for k in datasets[0].attrs.keys():
         if not k in concat_attrs:
             common_attrs = [k] + common_attrs
-    data_vars = {k: datasets[0].data_vars[k] for k in common_keys}
-    coords = deepcopy(datasets[0].coords)
-    coords.update({new_key: new_key_vals})
-    attrs = attrs = {k: datasets[0].attrs[k] for k in common_attrs}
-    for k in concat_keys:
-        data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_key)
-        data_vars.update({k: data_array})
-    for k in concat_attrs:
-        attr = np.concatenate([ds.attrs[k] for ds in datasets])
-        attrs.update({k: attr})
-    return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+
+    ds = np.empty(len(datasets), dtype="object")
+    for (i, d) in enumerate(datasets):
+        ds[i] = d
+    ds = np.reshape(ds, lens)
+
+    def f(datasets, new_dims, new_coords):
+        if len(new_dims) == 1:
+            nonlocal common_data_vars
+            data_vars = {k: datasets[0].data_vars[k] for k in common_data_vars}
+            coords = copy(datasets[0].coords)
+            coords.update({new_dims[0]: new_coords[0]})
+            nonlocal common_attrs
+            attrs = {k: datasets[0].attrs[k] for k in common_attrs}
+            nonlocal concat_data_vars
+            for k in concat_data_vars:
+                data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_dims[0])
+                data_vars.update({k: data_array})
+            nonlocal concat_attrs
+            for k in concat_attrs:
+                attr = np.concatenate([ds.attrs[k] for ds in datasets])
+                attrs.update({k: attr})
+            return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+        else:
+            tmp = []
+            for i in range(len(new_coords[0])):
+                tmp.append(f(datasets[i], new_dims[1:], new_coords[1:]))
+            return f(tmp, new_dims[0:1], new_coords[0:1])
+
+    return f(ds, new_dims, new_coords)
 
 #------------------------------#
 # Simulation utility functions #
 #------------------------------#
+
+
 @jit(cache=True, nopython=True)
 def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm."""

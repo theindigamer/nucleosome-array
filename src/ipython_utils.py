@@ -29,10 +29,11 @@ def _toListlike(results):
     return tmp
 
 
-def totalTime(result):
-    return result.attrs["timing"]["Total time"]
+def total_time(result):
+    return result["timing"][..., result["timing_keys"] == "Total time"]
 
-def savedata(results, fname):
+# TODO: fix this function to work with datasets
+def save_data(results, fname):
     tmp = _toListlike(results)
     if fname.endswith(".pckl"):
         with open(fname, "wb") as f:
@@ -47,7 +48,7 @@ def savedata(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def _simulate_dna(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
+def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
                   dnaClass=dnaMC.NakedDNA):
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
@@ -64,13 +65,12 @@ def simulate_dna(runs=5, **kwargs):
     dnas = []
     results = []
     for _ in range(runs):
-        d, r = _simulate_dna(**kwargs)
+        d, r = simulate_dna1(**kwargs)
         dnas = [d] + dnas
         results = [r] + results
     results = utils.concat_datasets(
-        results,
-        ["angles", "extension", "energy", "acceptance", "timing"],
-        new_key="run"
+        results, ["angles", "extension", "energy", "acceptance", "timing"],
+        ["run"], [np.arange(runs)]
     )
     return (dnas, results)
 
@@ -220,8 +220,8 @@ def marko_siggia_curve(B, strandLength):
     return (xs, f(xs))
 
 
-def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
-                      disordered=True, demo=False, runs=5):
+def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
+                       disordered=True, demo=False):
     """Compute force vs extension and optionally acceptance vs force.
 
     ``forces`` is some nonempty iterable with the desired force values to use.
@@ -241,19 +241,14 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     if demo:
         pre_steps = 10
-        runs = 3
         extra_steps = 10
         nsamples = 2
     else:
         pre_steps = 1000
-        runs = runs
         extra_steps = 1000
         nsamples = 10
-    runs_arr = np.array(range(runs))
-    nsamples_arr = np.array(range(nsamples))
-
     if disordered:
-        Pinv = 1/150
+        Pinv = 1/1000
         dnaClass = dnaMC.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
     else:
@@ -261,64 +256,65 @@ def compute_extension(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         dnaClass = dnaMC.NakedDNA
         opt_kwargs = {}
 
-    tot = kickSizes_arr.size * forces_arr.size
+    dnas = []
+    datasets = []
     i = 0
+    tot = kickSizes_arr.size * forces_arr.size
     print(' {0} out of {1}'.format(i, tot), end='', flush=True)
-
-    extension_arr = np.empty(
-        (kickSizes_arr.size, forces_arr.size, runs, nsamples)
-    )
-    # last dimension is 3 for the three angles
-    acceptance_ratio_arr = np.empty(
-        (kickSizes_arr.size, forces_arr.size, runs, nsamples, 3)
-    )
-
-    for ((j_ks, kickSize), (j_f, force)) in itertools.product(
-            enumerate(kickSizes), enumerate(forces)
-    ):
-        for j_r in range(runs):
-            dna = dnaClass(L=L, kickSize=kickSize, B=B,
-                           T=dnaMC.Environment.roomTemp, **opt_kwargs)
-            # TODO: add capability in relaxationProtocol to set nsamples=0
-            res = dna.relaxationProtocol(force=force, mcSteps=pre_steps,
-                                         nsamples=1)
-            res = dna.relaxationProtocol(force=force, mcSteps=extra_steps,
-                                         nsamples=nsamples)
-            extension = np.linalg.norm(res["extension"], axis=1)
-            extension_arr[j_ks, j_f, j_r] = extension
-            acceptance_ratio_arr[j_ks, j_f, j_r, :, :] = res["acceptance"]
+    for (kickSize, force) in itertools.product(kickSizes_arr, forces_arr):
+        dna = dnaClass(L=L, kickSize=kickSize, B=B,
+                       T=dnaMC.Environment.roomTemp, **opt_kwargs)
+        # TODO: add capability in relaxationProtocol to set nsamples=0
+        _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
+        datasets.append(dna.relaxationProtocol(force=force, mcSteps=extra_steps,
+                                               nsamples=nsamples))
+        dnas.append(dna)
         i += 1
         print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
+    print("")
 
-    extension_ds = xr.DataArray(
-        extension_arr,
-        dims=["kickSize", "force", "run", "sample"],
-        coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr],
-        attrs={"L": L, "B": B, "Pinv": Pinv,
-               "pre_steps": pre_steps, "extra_steps": extra_steps}
+    results = utils.concat_datasets(
+        datasets,
+        ["angles", "extension", "energy", "acceptance", "timing"],
+        ["kickSize", "force"],
+        [kickSizes_arr, forces_arr]
     )
+    results.attrs.update({
+        "pre_steps": pre_steps,
+        "extra_steps": extra_steps,
+        "nsamples": nsamples,
+    })
 
-    angles_str = ["φ", "θ", "ψ"]
-    acceptance_ratio_ds = xr.DataArray(
-        acceptance_ratio_arr,
-        dims=["kickSize", "force", "run", "sample", "angle"],
-        coords=[kickSizes_arr, forces_arr, runs_arr, nsamples_arr, angles_str]
+    return (dnas, results)
+
+
+def compute_extension(runs=5, **kwargs):
+    dnas = []
+    results = []
+    for _ in range(runs):
+        d, r = compute_extension1(**kwargs)
+        dnas = [d] + dnas
+        results = [r] + results
+    results = utils.concat_datasets(
+        results,
+        ["angles", "extension", "energy", "acceptance", "timing"],
+        ["run"],
+        [np.arange(runs)]
     )
-    return (extension_ds, acceptance_ratio_ds)
+    return (dnas, results)
 
+def draw_force_extension(dataset, acceptance=True):
+    kickSizes = dataset.coords["kickSize"].values
+    forces = dataset.coords["force"].values
+    runs = dataset.coords["run"].values
+    B = dataset.attrs["B"]
+    L = dataset.attrs["rodCount"]
+    Pinv = dataset.data_vars["Pinv"].values
+    print(Pinv)
+    pre_steps = dataset.attrs["pre_steps"]
+    extra_steps = dataset.attrs["extra_steps"]
+    nsamples = dataset.attrs["nsamples"]
 
-def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
-    kickSizes = extension_ds.coords["kickSize"].values
-    forces = extension_ds.coords["force"].values
-    runs = extension_ds.coords["run"].values[-1] + 1
-    nsamples = extension_ds.coords["sample"].values[-1] + 1
-    B = extension_ds.attrs["B"]
-    L = extension_ds.attrs["L"]
-    Pinv = extension_ds.attrs["Pinv"]
-    pre_steps = extension_ds.attrs["pre_steps"]
-    extra_steps = extension_ds.attrs["extra_steps"]
-
-    acceptance = not acceptance_ratio_ds is None
     fig, axes = plt.subplots(
         nrows=(2 if acceptance else 1),
         ncols=kickSizes.size,
@@ -326,12 +322,17 @@ def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
         sharey="row",
         squeeze=False
     )
-
     sns.set_style("darkgrid")
     ms_curve_x, ms_curve_y = marko_siggia_curve(B, 740)
+
     for (j, ks) in enumerate(kickSizes):
-        tmp = extension_ds.sel(kickSize=ks)
+        # 'axis' dimension is the last dimension
+        # there doesn't seem to be a simple way to broadcast np.linalg.norm
+        tmp = ((dataset["extension"].sel(kickSize=ks)**2).sum(dim='axis'))**0.5
+        # print((tmp == tmp2).all())
         mean, stdev = (lambda x: (x.mean(), x.std()))(tmp.groupby("force"))
+        print(mean.values)
+        print(forces)
         axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
                             capsize=4.0, linestyle='')
         axes[0, j].plot(ms_curve_x, ms_curve_y)
@@ -343,13 +344,15 @@ def draw_force_extension(extension_ds, acceptance_ratio_ds=None):
     axes[0, 0].set_ylabel("Force (pN)")
     axes[0, kickSizes.size//2].set_xlabel("Extension (nm)")
 
+    # Molecular dynamics simulation will not have acceptance values.
+    acceptance = acceptance and ("acceptance" in dataset)
     if acceptance:
         angles_str = ["φ", "θ", "ψ"]
         for (j, ks) in enumerate(kickSizes):
-            tmp = acceptance_ratio_ds.sel(kickSize=ks)
-            for angle in angles_str:
+            tmp = dataset["acceptance"].sel(kickSize=ks)
+            for (j_a, angle) in enumerate(angles_str):
                 mean, stdev = (lambda x: (x.mean(), x.std()))(
-                    tmp.sel(angle=angle).groupby("force")
+                    tmp.isel(angle_str=j_a).groupby("force")
                 )
                 axes[1, j].errorbar(forces, mean.values, yerr=stdev.values,
                                     label=angle)
@@ -385,6 +388,7 @@ def _fitTwist(L, angles, fitfn):
 
 pointsPerRod = 5 # for smoother plot of fit
 
+# TODO: fix this function to work with datasets
 def fitEvolution(L, results, fitfn, values=False):
     """Fits to the profiles specified in results at different points of time.
 
@@ -405,6 +409,7 @@ def fitEvolution(L, results, fitfn, values=False):
 def derivative(a):
     return np.append(np.insert(a[2:] - a[:-2], 0, [0]), 0)
 
+# TODO: fix this function to work with datasets
 def areas(results):
     pp = pprint.PrettyPrinter()
     table = [["tsteps", "twist-area", "dtwist/dx-area"]]
@@ -418,7 +423,8 @@ def areas(results):
 # Plotting functions #
 #--------------------#
 
-def plotAngles(dna, result, totalOnly=True, show=True):
+# TODO: fix this function to work with datasets
+def plot_angles(dna, result, totalOnly=True, show=True):
     """Make a plot of angles as a function of x (rod number).
 
     Use case: after using twistProtocol on the dna object.
@@ -430,11 +436,12 @@ def plotAngles(dna, result, totalOnly=True, show=True):
         plt.plot(euler[:,2], label="ψ")
     plt.plot(euler[:,0] + euler[:,2], label="φ+ψ")
     plt.legend(loc="upper left")
-    plt.title("Running time {0:.1f} s".format(totalTime(result)))
+    plt.title("Running time {0:.1f} s".format(total_time(result)))
     plt.ylabel("Angle/2π radians")
     if show:
         plt.show()
 
+# TODO: fix this function to work with datasets
 def plotEvolution(results, show=True, fits=None):
     """Make a plot of angles as a function of x (rod number) at different times.
 
@@ -447,7 +454,7 @@ def plotEvolution(results, show=True, fits=None):
     for (tstep, res) in zip(results["tsteps"], results["angles"]):
         plt.plot(res[:,0]+res[:,2], label=str(tstep))
     plt.legend(loc="upper left")
-    plt.title("Running time {0:.1f} s".format(totalTime(results)))
+    plt.title("Running time {0:.1f} s".format(total_time(results)))
     plt.ylabel("Angle/2π radians")
     if show:
         plt.show()
