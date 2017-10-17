@@ -231,25 +231,7 @@ class angular( object ):
 
     def rotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
-        sinPhi = np.sin( self.euler[..., 0])
-        cosPhi = np.cos( self.euler[..., 0])
-        sinTheta = np.sin( self.euler[..., 1] )
-        cosTheta = np.cos( self.euler[..., 1] )
-        sinPsi = np.sin( self.euler[..., 2] )
-        cosPsi = np.cos( self.euler[..., 2])
-
-        R = np.zeros(( self.L, 3, 3 ))
-        R[..., 0, 0] = cosPhi * cosPsi - cosTheta * sinPhi * sinPsi
-        R[..., 1, 0] = -cosPsi * sinPhi - cosTheta * cosPhi * sinPsi
-        R[..., 2, 0] = sinTheta * sinPsi
-        R[..., 0, 1] = cosPhi * sinPsi + cosTheta * cosPsi * sinPhi
-        R[..., 1, 1] = -sinPhi * sinPsi + cosTheta * cosPhi * cosPsi
-        R[..., 2, 1] = -cosPsi * sinTheta
-        R[..., 0, 2] = sinTheta * sinPhi
-        R[..., 1, 2] = cosPhi * sinTheta
-        R[..., 2, 2] = cosTheta
-
-        return R
+        return utils.rotation_matrices(self.euler)
 
     def oldDerivativeRotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""

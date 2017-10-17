@@ -7,24 +7,27 @@ def rotation_matrices(euler):
 
     Assumes: indices 0, 1 and 2 ↔ phi, theta, psi.
     """
-    l = len(euler)
-    R = np.empty((l, 3, 3))
-    for i in range(l):
-        phi = euler[i][0]
-        theta = euler[i][1]
-        psi = euler[i][2]
+    n = len(euler)
+    R = np.empty((n, 3, 3))
+    for i in range(n):
+        phi = euler[i, 0]
         cos_phi = np.cos(phi)
         sin_phi = np.sin(phi)
+        theta = euler[i, 1]
         cos_theta = np.cos(theta)
         sin_theta = np.sin(theta)
+        psi = euler[i, 2]
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
+
         R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
         R[i, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
         R[i, 0, 2] = sin_theta * sin_phi
+
         R[i, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
         R[i, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
         R[i, 1, 2] = cos_phi * sin_theta
+
         R[i, 2, 0] = sin_theta * sin_psi
         R[i, 2, 1] = -cos_psi * sin_theta
         R[i, 2, 2] = cos_theta
