@@ -13,7 +13,7 @@ plt.rcParams['contour.negative_linestyle'] = 'solid'
 plt.rc('text', usetex=True)
 plt.rc('font', family='serif')
 
-class strand( object ):
+class strand:
     """ This is the main class in the MD simulation.
         L is the number of segments. (I am using standard 128; Bryan used 740.)
         B and C are bend and twist moduli (divided by kT).
@@ -47,9 +47,9 @@ class strand( object ):
         tangent[-1,1] = self.d * np.sin(self.thetaEnd)
         tangent[-1,2] = self.d * np.cos(self.thetaEnd)
 
-        return tangent 
+        return tangent
 
-    def jacobian( self, tangent=None ):
+    def oldJacobian( self, tangent=None ):
         """Returns the jacobian of the alpha to r transformation.
            Shape: (L, 4, 4).
            alpha (rows) is ordered as {delta, phi, theta, psi}.
@@ -59,7 +59,7 @@ class strand( object ):
         if tangent is None: tangent=self.tangent()
         t = tangent
         D = np.sqrt( t[...,0]**2 + t[...,1]**2 + t[...,2]**2 )
-        p = np.sqrt( t[...,0]**2 + t[...,1]**2 ) #+ 1.E-16
+        p = np.sqrt( t[...,0]**2 + t[...,1]**2 + 1.E-16 )
 
         J = np.zeros(( self.L, 4, 4 ))
         J[..., 0, 0] = -t[:,0] / D
@@ -72,6 +72,17 @@ class strand( object ):
         J[..., 2, 2] = p / D**2
 
         return J
+
+    def jacobian( self, tangent=None ):
+        """Returns the jacobian of the alpha to r transformation.
+           Shape: (L, 4, 4).
+           alpha (rows) is ordered as {delta, phi, theta, psi}.
+           r (columns) is ordered as {x,y,z,psi}.
+           * We don't have psi depend on r.
+           ** We should check with * numerically."""
+        if tangent is None:
+            tangent = self.tangent()
+        return utils.md_jacobian(tangent)
 
     def removeLocalStretch( self, tangent=None ):
         """ Updates r vector to remove local stretch """
@@ -127,7 +138,7 @@ def rDot( r, time, strandClass, tangent=None, jacobian=None, torques=None,
         tDot = projectPerp( tDot, normalize(tangent) )
         drdt[1:,:3] = np.cumsum( tDot[:-1], axis=0 )
 
-    drdt[1:,3] -= cPsi * tau[1:,3]   
+    drdt[1:,3] -= cPsi * tau[1:,3]
 
     if flattened:
         return drdt.flatten()
@@ -293,7 +304,7 @@ class angular( object ):
             for j in range(3):
                 for k in range(3):
                     if k==2:
-                        c = -( self.C + 2.0*self.B ) / ( 2.0*self.d ) 
+                        c = -( self.C + 2.0*self.B ) / ( 2.0*self.d )
                     else:
                         c = -self.C / ( 2.0*self.d )
                     tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
@@ -308,9 +319,7 @@ class angular( object ):
         else:
             RLp1[:-1,...] = Rs
         RLp1[-1,...] = self.RL
-        
+
         a = np.swapaxes( RLp1[:-1], 1, 2 )
         b = RLp1[1:]
-        return np.array([ np.dot(a[i], b[i]) for i in xrange(len(a)) ])
-
         return a @ b
