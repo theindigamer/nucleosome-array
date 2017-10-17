@@ -7,6 +7,7 @@ import pickle
 import os
 import copy
 import datetime
+import utils
 matplotlib.rcParams.update({'font.size': 20})
 plt.rcParams['contour.negative_linestyle'] = 'solid'
 plt.rc('text', usetex=True)
@@ -243,7 +244,7 @@ class angular( object ):
 
         return R
 
-    def derivativeRotationMatrices( self ):
+    def oldDerivativeRotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
         sinPhi = np.sin( self.euler[..., 0])
         cosPhi = np.cos( self.euler[..., 0])
@@ -275,6 +276,10 @@ class angular( object ):
         DR[..., 1, 1, 2] = -sinPhi * cosPsi - cosPhi * cosTheta * sinPsi
         DR[..., 2, 1, 2] = sinTheta * sinPsi
         return DR
+
+    def derivativeRotationMatrices( self ):
+        """ Returns rotation matrices along the DNA string"""
+        return utils.md_derivative_rotation_matrices(self.euler)
 
     def effectiveTorques( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""

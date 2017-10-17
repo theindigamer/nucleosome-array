@@ -176,3 +176,55 @@ def exitAngles(entryangles):
 def calc_deltas(deltas, nucs, Rs):
     for i in nucs:
         deltas[i] = _multiplyMatrices3(_nf_tf_matrix, _AmatrixFromMatrix(Rs[i-1]), Rs[i])
+
+@jit(cache=True, nopython=True)
+def md_derivative_rotation_matrices(euler):
+    n = len(euler)
+    DR = np.empty((n, 3, 3, 3))
+    for i in range(n):
+        phi = euler[i, 0]
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        theta = euler[i, 1]
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        psi = euler[i, 2]
+        cos_psi = np.cos(psi)
+        sin_psi = np.sin(psi)
+
+        DR[i, 0, 0, 0] = -sin_phi * cos_psi - cos_phi * cos_theta * sin_psi
+        DR[i, 0, 0, 1] = sin_phi * sin_theta * sin_psi
+        DR[i, 0, 0, 2] = -sin_phi * cos_theta * cos_psi - cos_phi * sin_psi
+
+        DR[i, 0, 1, 0] = cos_phi * cos_theta * cos_psi - sin_phi * sin_psi
+        DR[i, 0, 1, 1] = -sin_phi * sin_theta * cos_psi
+        DR[i, 0, 1, 2] = cos_phi * cos_psi - sin_phi * cos_theta * sin_psi
+
+        DR[i, 0, 2, 0] = cos_phi * sin_theta
+        DR[i, 0, 2, 1] = sin_phi * cos_theta
+        DR[i, 0, 2, 2] = 0.
+
+        DR[i, 1, 0, 0] = -cos_phi * cos_psi + sin_phi * cos_theta * sin_psi
+        DR[i, 1, 0, 1] = cos_phi * sin_theta * sin_psi
+        DR[i, 1, 0, 2] = -cos_phi * cos_theta * cos_psi + sin_phi * sin_psi
+
+        DR[i, 1, 1, 0] = -sin_phi * cos_theta * cos_psi - cos_phi * sin_psi
+        DR[i, 1, 1, 1] = -cos_phi * sin_theta * cos_psi
+        DR[i, 1, 1, 2] = -sin_phi * cos_psi - cos_phi * cos_theta * sin_psi
+
+        DR[i, 1, 2, 0] = -sin_phi * sin_theta
+        DR[i, 1, 2, 1] = cos_phi * cos_theta
+        DR[i, 1, 2, 2] = 0.
+
+        DR[i, 2, 0, 0] = 0.
+        DR[i, 2, 0, 1] = cos_theta * sin_psi
+        DR[i, 2, 0, 2] = sin_theta * cos_psi
+
+        DR[i, 2, 1, 0] = 0.
+        DR[i, 2, 1, 1] = -cos_theta * cos_psi
+        DR[i, 2, 1, 2] = sin_theta * sin_psi
+
+        DR[i, 2, 2, 0] = 0.
+        DR[i, 2, 2, 1] = -sin_theta
+        DR[i, 2, 2, 2] = 0.
+    return DR
