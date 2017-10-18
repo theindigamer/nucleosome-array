@@ -9,9 +9,9 @@ class Environment:
 
     Future properties one might include: salt/ion concentration etc.
     """
-    roomTemp = 293.15 # in Kelvin
-    minTemp = 1E-10   # in Kelvin
-    def __init__(self, T=roomTemp):
+    ROOM_TEMP = 293.15 # in Kelvin
+    MIN_TEMP = 1E-10   # in Kelvin
+    def __init__(self, T=ROOM_TEMP):
         self.T = T
 
 
@@ -157,7 +157,7 @@ class NakedDNA:
     DEFAULT_TWIST_STEP = np.pi/4
 
     def __init__(self, L=740, B=43.0, C=89.0,
-                 T=Environment.roomTemp,
+                 T=Environment.ROOM_TEMP,
                  kickSize=Simulation.DEFAULT_KICK_SIZE):
         self.L = L
         # B, Bm and C are in nm kT
@@ -265,7 +265,7 @@ class NakedDNA:
             Es = force * tangent * prefactor
             prefactor = 1E-12 1E-9/ (1.38E-23 T).
             Change prefactor to change the temperature."""
-        T = max(self.env.T, Environment.minTemp)
+        T = max(self.env.T, Environment.MIN_TEMP)
         prefactor = 1.0 / (1.38E-2 * T)
         if tangent is None:
             tangent = self.tVector()
@@ -341,7 +341,10 @@ class NakedDNA:
             # Now reject == [0., 1., 0., 1., ...]
             # Wait! Some of these should be accepted according to the Metropolis
             # algorithm. We only need to examine _odd_ indices of reject.
-            utils.metropolis(reject, deltaE, even=False)
+            if self.env.T == Environment.MIN_TEMP:
+                reject[deltaE <= 0.] = 0.
+            else:
+                utils.metropolis(reject, deltaE, even=False)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force)
             if acceptance:

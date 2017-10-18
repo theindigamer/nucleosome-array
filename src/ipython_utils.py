@@ -17,6 +17,12 @@ import copy
 import itertools
 import pprint
 
+#------------------#
+# Common constants #
+#------------------#
+
+ANGLES_STR = ["φ", "θ", "ψ"]
+
 #-------------------#
 # Utility functions #
 #-------------------#
@@ -150,9 +156,10 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     return (dna, results)
 
 
-def testDiffusion(initialFn, L=32, T=dnaMC.Environment.roomTemp, height=np.pi/4,
-                  mcSteps=100, nsamples=4, dnaClass=dnaMC.NakedDNA,
-                  kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE):
+def simulate_diffusion(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
+                       height=np.pi/4, mcSteps=100, nsamples=4,
+                       dnaClass=dnaMC.NakedDNA,
+                       kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE):
     """Testing for diffusion in DNA using a delta or a step profile initially.
 
     initialFn should be one of "delta" or "step".
@@ -179,7 +186,7 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
     If mode is "product", all possible combinations of the two are used.
     If mode is "zip", the two lists are zipped and used.
 
-    args and kwargs are for the testDiffusion function.
+    args and kwargs are for the simulate_diffusion function.
     """
     if mode == "product":
         T_ks = itertools.product(Ts, kickSizes)
@@ -195,17 +202,14 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
                          " Recognized values are 'product' and 'zip'.")
     results = []
     for (T, kickSize) in T_ks:
-        kwargs.update({
-            "T": T,
-            "kickSize": kickSize,
-            "dnaClass": dnaMC.NakedDNA,
-        })
-        _, res = testDiffusion(*args, **kwargs)
-        res.update({
-            "T": T,
-            "kickSize": kickSize,
-        })
+        _, res = simulate_diffusion(*args, **kwargs)
         results.append(res.copy())
+    results = utils.concat_datasets(
+        results,
+        ["angles", "extension", "energy", "acceptance", "timing"],
+        ["temperature", "kickSize"],
+        [Ts, kickSizes]
+    )
     return results
 
 
@@ -221,7 +225,7 @@ def marko_siggia_curve(B, strandLength):
 
 
 def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
-                       disordered=True, demo=False):
+                       disordered=True, demo=False, Pinv=1/150):
     """Compute force vs extension and optionally acceptance vs force.
 
     ``forces`` is some nonempty iterable with the desired force values to use.
@@ -231,8 +235,6 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     are randomly shifted from zero physical bend.
     ``demo`` is provided for quickly debugging the drawing code without
     worrying about the actual physical values.
-    ``runs`` fixes the number of runs for sampling. If ``demo`` is ``True``,
-    this argument is ignored.
     """
     L = 128
     B = 35.0
@@ -246,9 +248,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     else:
         pre_steps = 1000
         extra_steps = 1000
-        nsamples = 10
+        nsamples = 100
     if disordered:
-        Pinv = 1/1000
         dnaClass = dnaMC.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
     else:
@@ -263,11 +264,11 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     print(' {0} out of {1}'.format(i, tot), end='', flush=True)
     for (kickSize, force) in itertools.product(kickSizes_arr, forces_arr):
         dna = dnaClass(L=L, kickSize=kickSize, B=B,
-                       T=dnaMC.Environment.roomTemp, **opt_kwargs)
-        # TODO: add capability in relaxationProtocol to set nsamples=0
+                       T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
         _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
         datasets.append(dna.relaxationProtocol(force=force, mcSteps=extra_steps,
                                                nsamples=nsamples))
+        datasets[-1]["tsteps"] += pre_steps
         dnas.append(dna)
         i += 1
         print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
@@ -310,7 +311,6 @@ def draw_force_extension(dataset, acceptance=True):
     B = dataset.attrs["B"]
     L = dataset.attrs["rodCount"]
     Pinv = dataset.data_vars["Pinv"].values
-    print(Pinv)
     pre_steps = dataset.attrs["pre_steps"]
     extra_steps = dataset.attrs["extra_steps"]
     nsamples = dataset.attrs["nsamples"]
@@ -347,10 +347,9 @@ def draw_force_extension(dataset, acceptance=True):
     # Molecular dynamics simulation will not have acceptance values.
     acceptance = acceptance and ("acceptance" in dataset)
     if acceptance:
-        angles_str = ["φ", "θ", "ψ"]
         for (j, ks) in enumerate(kickSizes):
             tmp = dataset["acceptance"].sel(kickSize=ks)
-            for (j_a, angle) in enumerate(angles_str):
+            for (j_a, angle) in enumerate(ANGLES_STR):
                 mean, stdev = (lambda x: (x.mean(), x.std()))(
                     tmp.isel(angle_str=j_a).groupby("force")
                 )
@@ -386,7 +385,7 @@ def erf(x, mu, A, sig):
 def _fitTwist(L, angles, fitfn):
     return curve_fit(fitfn, np.arange(0,L), angles[:,0] + angles[:,2], p0=(L/2, 1, 5))
 
-pointsPerRod = 5 # for smoother plot of fit
+POINTS_PER_ROD = 5 # for smoother plot of fit
 
 # TODO: fix this function to work with datasets
 def fitEvolution(L, results, fitfn, values=False):
@@ -401,7 +400,7 @@ def fitEvolution(L, results, fitfn, values=False):
     if values:
         fits = []
         for (p, _) in params:
-            fits.append(fitfn(np.arange(0,L,1/pointsPerRod), *p))
+            fits.append(fitfn(np.arange(0,L,1/POINTS_PER_ROD), *p))
         return (params, fits)
     else:
         return params
@@ -442,15 +441,15 @@ def plot_angles(dna, result, totalOnly=True, show=True):
         plt.show()
 
 # TODO: fix this function to work with datasets
-def plotEvolution(results, show=True, fits=None):
+def plot_evolution(results, show=True, fits=None):
     """Make a plot of angles as a function of x (rod number) at different times.
 
     Use case: after using relaxationProtocol.
     """
     if fits != None:
-        L = len(fits[0])/pointsPerRod
+        L = len(fits[0])/POINTS_PER_ROD
         for fit in fits:
-            plt.plot(np.arange(0,L,1/pointsPerRod), fit)
+            plt.plot(np.arange(0,L,1/POINTS_PER_ROD), fit)
     for (tstep, res) in zip(results["tsteps"], results["angles"]):
         plt.plot(res[:,0]+res[:,2], label=str(tstep))
     plt.legend(loc="upper left")
