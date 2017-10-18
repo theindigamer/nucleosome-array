@@ -2,6 +2,7 @@ import numpy as np
 import time
 import utils
 import xarray as xr
+from numba import jit
 
 
 class Environment:
@@ -150,8 +151,8 @@ class NakedDNA:
     """A strand of DNA without any nucleosomes.
 
     Euler angles are ordered as phi, theta and psi.
-    Values of B and C are from [1, Table I].
-    [1, (30)] describes the microscopic parameter Bm computed from B.
+    Values of B and C are from [DS, Table I].
+    [DS, Eqn. (30)] describes the microscopic parameter Bm computed from B.
     """
 
     DEFAULT_TWIST_STEP = np.pi/4
@@ -211,19 +212,12 @@ class NakedDNA:
         timers[7] += time.clock() - start
         return deltas
 
+    @jit(cache=True)
     def twistBendAngles(self, Ds=None):
         """ Returns the twist and bending angles."""
         if Ds is None:
             Ds = self.deltaMatrices()
-        if self.sim.squared:
-            betaSq = 2.0 * (1 - Ds[:, 2, 2])
-            GammaSq = 1.0 - Ds[:, 0, 0] - Ds[:, 1, 1] + Ds[:, 2, 2]
-            return betaSq, GammaSq
-        else:
-            beta1 = (Ds[:, 1, 2] - Ds[:, 2, 1]) / 2.0
-            beta2 = (Ds[:, 2, 0] - Ds[:, 0, 2]) / 2.0
-            Gamma = (Ds[:, 0, 1] - Ds[:, 1, 0]) / 2.0
-            return beta1, beta2, Gamma
+        return utils.twist_bend_angles(Ds, self.sim.squared)
 
     def bendingEnergyDensity(self, angles=None):
         """ Returns the bending energy density.
@@ -452,7 +446,7 @@ class NakedDNA:
 
 class DisorderedNakedDNA(NakedDNA):
 
-    # [1, Appendix 1] describes equations related to disorder.
+    # [DS, Appendix 1] describes equations related to disorder.
     def __init__(self, Pinv=1./300, **kwargs):
         # The 1/300 value has no particular significance.
         # [1] considers values from ~1/1000 to ~1/100
@@ -460,7 +454,7 @@ class DisorderedNakedDNA(NakedDNA):
         self.Pinv = Pinv # inverse of P value in 1/nm
         self.Bm = self.B / (1 - self.B * Pinv)
         sigma_b = (Pinv * self.d) ** 0.5
-        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)], see [1, (E1)]
+        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)], see [DS, Eqn. (E1)]
         xi = np.random.randn(2, self.L - 1)
         self.bend_zeros = sigma_b * xi
         self.sim.squared = False

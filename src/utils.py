@@ -34,7 +34,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
     Note:
         * If a new dimension was saved in the datasets as either a data variable
           or as an attribute, it will be removed. Example: say you have a
-          3 datasets with [DV: X, DIM: Y, ATTR:Z] and you want to concatenate
+          3 datasets with [DV: X, DIM: Y, ATTR: Z] and you want to concatenate
           along Z, then the final dataset will be like [DV: X, DIM: Y Z, ATTR:].
         * You can also use numpy arrays instead of lists.
         * Lists of length 1 should be used if needed instead of "unwrapping";
@@ -105,41 +105,65 @@ def metropolis(reject, deltaE, even=True):
 
 @jit(cache=True, nopython=True)
 def twist_bend_angles(Deltas, squared):
+    u"""Computes twist and bend values for an array of Delta matrices.
+
+    Args:
+        Deltas (Array[float; (L-1, 3, 3)]):
+            Matrices describing relative twist between consecutive rods.
+        squared (bool): Returns
+
+    Returns:
+        (β^2, β^2, Γ^2) if squared is true.
+        (β₁^2, β₂^2, Γ) if squared is false.
+        Individual terms are arrays of shape (L-1,).
+
+    Note:
+        See [DS, Appendix D] for equations.
+    """
     n = len(Deltas)
     if squared:
         beta_sq = np.empty(n)
         Gamma_sq = np.empty(n)
         for i in range(n):
-            beta_sq[i] = 2.0 * (1.0 - Delta[i, 2, 2])
-            Gamma_sq[i] = 1.0 - Delta[i, 0, 0] - Delta[i, 1, 1] + Delta[i, 2, 2]
-        # TODO: fix the second dummy value
+            beta_sq[i] = 2.0 * (1.0 - Deltas[i, 2, 2])
+            Gamma_sq[i] = (1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1]
+                           + Deltas[i, 2, 2])
+        # We need to have a dummy value as Numba requires type signatures of
+        # possible return values to be the same.
         return (beta_sq, beta_sq, Gamma_sq)
     else:
         beta_1 = np.empty(n)
         beta_2 = np.empty(n)
         Gamma = np.empty(n)
         for i in range(n):
-            beta_1[i] = (Delta[i, 1, 2] - Delta[i, 2, 1]) / 2.0
-            beta_2[i] = (Delta[i, 2, 0] - Delta[i, 0, 2]) / 2.0
-            Gamma[i]  = (Delta[i, 0, 1] - Delta[i, 1, 0]) / 2.0
+            beta_1[i] = (Deltas[i, 1, 2] - Deltas[i, 2, 1]) / 2.0
+            beta_2[i] = (Deltas[i, 2, 0] - Deltas[i, 0, 2]) / 2.0
+            Gamma[i]  = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
         return (beta_1, beta_2, Gamma)
 
 @jit(cache=True, nopython=True)
 def rotation_matrices(euler):
-    """Computes rotation matrices element-wise.
+    u"""Computes rotation matrices element-wise.
 
-    Assumes: indices 0, 1 and 2 ↔ phi, theta, psi.
+    Args:
+        euler (Array[float; (L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+
+    Returns:
+        Passive rotation matrices in an array of shape (L, 3, 3).
+
+    Note:
+        Represents [DS, Eqn. (B1, B2)].
     """
     n = len(euler)
     R = np.empty((n, 3, 3))
     for i in range(n):
-        phi = euler[i][0]
-        theta = euler[i][1]
-        psi = euler[i][2]
+        phi = euler[i, 0]
         cos_phi = np.cos(phi)
         sin_phi = np.sin(phi)
+        theta = euler[i, 1]
         cos_theta = np.cos(theta)
         sin_theta = np.sin(theta)
+        psi = euler[i, 2]
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
         R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
