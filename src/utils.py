@@ -94,6 +94,32 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
 #------------------------------#
 
 @jit(cache=True, nopython=True)
+def tangent_vector1(euler):
+    t = np.empty(3)
+    phi = euler[0]
+    theta = euler[1]
+    sin_theta = np.sin(theta)
+    t[0] = sin_theta * np.sin(phi)
+    t[1] = sin_theta * np.cos(phi)
+    t[2] = np.cos(theta)
+    return t
+
+
+@jit(cache=True, nopython=True)
+def tangent_vector(euler):
+    n = len(euler)
+    t = np.empty((n, 3))
+    for i in range(n):
+        phi = euler[i, 0]
+        theta = euler[i, 1]
+        sin_theta = np.sin(theta)
+        t[i, 0] = sin_theta * np.sin(phi)
+        t[i, 1] = sin_theta * np.cos(phi)
+        t[i, 2] = np.cos(theta)
+    return t
+
+
+@jit(cache=True, nopython=True)
 def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm."""
     for i in range(0 if even else 1, reject.size, 2):
@@ -114,7 +140,7 @@ def twist_bend_angles(Deltas, squared):
 
     Returns:
         (β^2, β^2, Γ^2) if squared is true.
-        (β₁^2, β₂^2, Γ) if squared is false.
+        (β₁, β₂, Γ) if squared is false.
         Individual terms are arrays of shape (L-1,).
 
     Note:

@@ -157,7 +157,7 @@ class NakedDNA:
 
     DEFAULT_TWIST_STEP = np.pi/4
 
-    def __init__(self, L=740, B=43.0, C=89.0,
+    def __init__(self, L=740, B=43.0, C=89.0, strand_len=740.0,
                  T=Environment.ROOM_TEMP,
                  kickSize=Simulation.DEFAULT_KICK_SIZE):
         self.L = L
@@ -168,11 +168,11 @@ class NakedDNA:
         self.C = C
         self.env = Environment(T=T)
         self.sim = Simulation(kickSize=kickSize)
-        self.strandLength = 740.0 # in nm
+        self.strandLength = strand_len # in nm
         self.d = self.strandLength/L # total length is 740 nm
         self.euler = np.zeros((self.L, 3))
         self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
-        self.evenMask = np.roll(self.oddMask, 1)
+        self.evenMask = np.logical_not(self.oddMask)
 
     def constants(self):
         return {
@@ -292,14 +292,9 @@ class NakedDNA:
             totalEnergyDensity = self.totalEnergyDensity(force)
         return np.sum(totalEnergyDensity)
 
-    def tVector( self ):
+    def tVector(self):
         """ Returns the tangent vectors. """
-        ( phi, theta ) = ( self.euler[:,0], self.euler[:,1] )
-        t = np.zeros(( self.L, 3 ))
-        t[:, 0] = np.sin(theta) * np.sin(phi)
-        t[:, 1] = np.cos(phi) * np.sin(theta)
-        t[:, 2] = np.cos(theta)
-        return t
+        return utils.tangent_vector(self.euler)
 
     def rVector( self, t=None ):
         """ Returns the end points of the t-vectors."""
@@ -333,9 +328,9 @@ class NakedDNA:
             # 1.0 ⇔ true ⇔ move is rejected, first reject all moves of even rods
             reject = 1.0 * self.oddMask
             # Now reject == [0., 1., 0., 1., ...]
-            # Wait! Some of these should be accepted according to the Metropolis
+            # Some of the 1's should be accepted according to the Metropolis
             # algorithm. We only need to examine _odd_ indices of reject.
-            if self.env.T == Environment.MIN_TEMP:
+            if self.env.T <= Environment.MIN_TEMP:
                 reject[deltaE <= 0.] = 0.
             else:
                 utils.metropolis(reject, deltaE, even=False)
@@ -351,7 +346,10 @@ class NakedDNA:
             deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
 
             reject = 1.0 * self.evenMask
-            utils.metropolis(reject, deltaE, even=True)
+            if self.env.T <= Environment.MIN_TEMP:
+                reject[deltaE <= 0.] = 0.
+            else:
+                utils.metropolis(reject, deltaE, even=True)
             self.euler[1:-1,i] -= moves[:, i] * reject
             E0 = self.totalEnergyDensity(force)
             if acceptance:

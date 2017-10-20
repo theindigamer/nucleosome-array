@@ -23,6 +23,9 @@ import pprint
 
 ANGLES_STR = ["φ", "θ", "ψ"]
 
+def mean_std(x, **kwargs):
+    return (x.mean(**kwargs), x.std(**kwargs))
+
 #-------------------#
 # Utility functions #
 #-------------------#
@@ -54,31 +57,47 @@ def save_data(results, fname):
 # Key simulation functions #
 #--------------------------#
 
+def run(runs, f, *args, **kwargs):
+    tmp = []
+    for _ in range(runs):
+        tmp.append(f(*args, **kwargs))
+    if isinstance(tmp[0], tuple):
+        flag = True
+        dnas, results = list(zip(*tmp))
+    else:
+        flag = False
+        results = tmp
+    results = utils.concat_datasets(
+        results, ["angles", "extension", "energy", "acceptance", "timing"],
+        ["run"], [np.arange(runs)]
+    )
+    if flag:
+        return dnas, results
+    else:
+        return results
+
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
                   dnaClass=dnaMC.NakedDNA):
+    """Twisting a DNA with one end."""
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
     result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def simulate_dna(runs=5, **kwargs):
-    """Twisting a DNA from one end.
+    """Twisting a DNA from one end (multiple runs).
 
-    Returns a DNA object in the twisted form and a dictionary containing
-    relevant parameters.
+    Args:
+        runs (int): Number of runs for the simulation.
+        kwargs: See simulate_dna1.
+
+    Returns:
+        A list of DNA strands in the final state, and the combined results of
+        the multiple simulations in one dataset.
     """
-    dnas = []
-    results = []
-    for _ in range(runs):
-        d, r = simulate_dna1(**kwargs)
-        dnas = [d] + dnas
-        results = [r] + results
-    results = utils.concat_datasets(
-        results, ["angles", "extension", "energy", "acceptance", "timing"],
-        ["run"], [np.arange(runs)]
-    )
-    return (dnas, results)
+    return run(runs, simulate_dna1, **kwargs)
+
 
 def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
@@ -156,7 +175,7 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     return (dna, results)
 
 
-def simulate_diffusion(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
+def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
                        height=np.pi/4, mcSteps=100, nsamples=4,
                        dnaClass=dnaMC.NakedDNA,
                        kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE):
@@ -176,6 +195,10 @@ def simulate_diffusion(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
                          " or 'step'.")
     results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
+
+
+def simulate_diffusion(*args, runs=5, **kwargs):
+    return run(runs, simulate_diffusion1, *args, **kwargs)
 
 
 def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
@@ -290,19 +313,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
 
 def compute_extension(runs=5, **kwargs):
-    dnas = []
-    results = []
-    for _ in range(runs):
-        d, r = compute_extension1(**kwargs)
-        dnas = [d] + dnas
-        results = [r] + results
-    results = utils.concat_datasets(
-        results,
-        ["angles", "extension", "energy", "acceptance", "timing"],
-        ["run"],
-        [np.arange(runs)]
-    )
-    return (dnas, results)
+    return run(runs, compute_extension1, **kwargs)
+
 
 def draw_force_extension(dataset, acceptance=True):
     kickSizes = dataset.coords["kickSize"].values
@@ -310,6 +322,7 @@ def draw_force_extension(dataset, acceptance=True):
     runs = dataset.coords["run"].values
     B = dataset.attrs["B"]
     L = dataset.attrs["rodCount"]
+    T = dataset.attrs["temperature"]
     Pinv = dataset.data_vars["Pinv"].values
     pre_steps = dataset.attrs["pre_steps"]
     extra_steps = dataset.attrs["extra_steps"]
@@ -329,8 +342,7 @@ def draw_force_extension(dataset, acceptance=True):
         # 'axis' dimension is the last dimension
         # there doesn't seem to be a simple way to broadcast np.linalg.norm
         tmp = ((dataset["extension"].sel(kickSize=ks)**2).sum(dim='axis'))**0.5
-        # print((tmp == tmp2).all())
-        mean, stdev = (lambda x: (x.mean(), x.std()))(tmp.groupby("force"))
+        mean, stdev = mean_std(tmp.groupby("force"))
         print(mean.values)
         print(forces)
         axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
@@ -360,13 +372,13 @@ def draw_force_extension(dataset, acceptance=True):
             axes[1, kickSizes.size//2].set_xlabel("Force (pN)")
 
     fig.suptitle(
-        ("Contour length (straight) L_0 = 740 nm, #rods = {6}\n"
+        ("Contour length (straight) L_0 = 740 nm, #rods = {6}, T = {7:.0f} K\n"
          "Effective persistence length Lp = {5:.1f} nm, "
          "Intrinsic disorder persistence length P = {0:.1f} nm\n"
          "Thermalization steps = {1}, extra steps = {2}, "
          "#samples in extra steps = {3}, runs = {4}").format(
              1/Pinv if Pinv != 0 else np.inf, pre_steps,
-             extra_steps, nsamples, runs, B, L),
+             extra_steps, nsamples, runs, B, L, T),
         fontdict = {"fontsize": 10})
     plt.legend(loc="upper right")
     plt.show(block=False)
@@ -430,10 +442,10 @@ def plot_angles(dna, result, totalOnly=True, show=True):
     """
     euler = dna.euler/(2*np.pi)
     if not totalOnly:
-        plt.plot(euler[:,0], label="φ")
-        plt.plot(euler[:,1], label="ϑ")
-        plt.plot(euler[:,2], label="ψ")
-    plt.plot(euler[:,0] + euler[:,2], label="φ+ψ")
+        plt.plot(euler[:,0], label=ANGLES_STR[0])
+        plt.plot(euler[:,1], label=ANGLES_STR[1])
+        plt.plot(euler[:,2], label=ANGLES_STR[2])
+    plt.plot(euler[:,0] + euler[:,2], label=(ANGLES_STR[0] + "+" + ANGLES_STR[2]))
     plt.legend(loc="upper left")
     plt.title("Running time {0:.1f} s".format(total_time(result)))
     plt.ylabel("Angle/2π radians")
