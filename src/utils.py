@@ -1,22 +1,195 @@
 import numpy as np
 from numba import jit
+import xarray as xr
+from copy import copy
+
+#-------------------#
+# Data manipulation #
+#-------------------#
+
+def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
+                    concat_attrs=[]):
+    """Concatentate multiple datasets by adding new dimensions.
+
+    The primary use for this function will be combining datasets across multiple
+    runs. That way one can simply write a function ``foo`` that does 1 run of a
+    simulation, and another helper function which simply calls ``foo`` n times,
+    collects all the datasets in a list, and combines them using this function,
+    instead of separately implementing multiple run functionality for every
+    simulation.
+
+    This function is somewhat like an n-dimensional generalization of
+    ``xarray``'s ``concat`` function.
+
+    Args:
+        datasets (List[xarray.Dataset]): Datasets to be concatenated.
+        concat_data_vars (List[str]): Data variables to be concatentated.
+        new_dims (List[str]): The new dimensions for concatenation.
+        new_coords (List[List[T]]): New coordinates for each new dimension.
+        concat_attrs (List[str]): Attributes to be concatentated.
+
+    Returns:
+        A new dataset representing the desired concatenation.
+
+    Note:
+        * If a new dimension was saved in the datasets as either a data variable
+          or as an attribute, it will be removed. Example: say you have a
+          3 datasets with [DV: X, DIM: Y, ATTR: Z] and you want to concatenate
+          along Z, then the final dataset will be like [DV: X, DIM: Y Z, ATTR:].
+        * You can also use numpy arrays instead of lists.
+        * Lists of length 1 should be used if needed instead of "unwrapping";
+          the latter may give unexpected results.
+    """
+    if len(new_dims) != len(new_coords):
+        raise ValueError("The number of dimensions should be equal to the"
+                         " number of coordinate lists. This mismatch might have"
+                         " happened if you forgot to wrap new_dims or"
+                         " new_coords in a list.")
+    lens = tuple(map(len, new_coords))
+
+    # Some data variables and attributes are shared across datasets, so these
+    # will not get a nested structure.
+    common_data_vars = []
+    for k in datasets[0].data_vars.keys():
+        if not (k in concat_data_vars or k in new_dims):
+            common_data_vars = [k] + common_data_vars
+    common_attrs = []
+    for k in datasets[0].attrs.keys():
+        if not (k in concat_attrs or k in new_dims):
+            common_attrs = [k] + common_attrs
+
+    ds = np.empty(len(datasets), dtype="object")
+    for (i, d) in enumerate(datasets):
+        ds[i] = d
+    ds = np.reshape(ds, lens)
+
+    def f(datasets, new_dims, new_coords):
+        if len(new_dims) == 1:
+            nonlocal common_data_vars
+            data_vars = {k: datasets[0].data_vars[k] for k in common_data_vars}
+            coords = copy(datasets[0].coords)
+            coords.update({new_dims[0]: new_coords[0]})
+            nonlocal common_attrs
+            attrs = {k: datasets[0].attrs[k] for k in common_attrs}
+            nonlocal concat_data_vars
+            for k in concat_data_vars:
+                data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_dims[0])
+                data_vars.update({k: data_array})
+            nonlocal concat_attrs
+            for k in concat_attrs:
+                attr = np.concatenate([ds.attrs[k] for ds in datasets])
+                attrs.update({k: attr})
+            return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+        else:
+            tmp = []
+            for i in range(len(new_coords[0])):
+                tmp.append(f(datasets[i], new_dims[1:], new_coords[1:]))
+            return f(tmp, new_dims[0:1], new_coords[0:1])
+
+    return f(ds, new_dims, new_coords)
+
+
+#------------------------------#
+# Simulation utility functions #
+#------------------------------#
+
+@jit(cache=True, nopython=True)
+def tangent_vector1(euler):
+    t = np.empty(3)
+    phi = euler[0]
+    theta = euler[1]
+    sin_theta = np.sin(theta)
+    t[0] = sin_theta * np.sin(phi)
+    t[1] = sin_theta * np.cos(phi)
+    t[2] = np.cos(theta)
+    return t
+
+
+@jit(cache=True, nopython=True)
+def tangent_vector(euler):
+    n = len(euler)
+    t = np.empty((n, 3))
+    for i in range(n):
+        phi = euler[i, 0]
+        theta = euler[i, 1]
+        sin_theta = np.sin(theta)
+        t[i, 0] = sin_theta * np.sin(phi)
+        t[i, 1] = sin_theta * np.cos(phi)
+        t[i, 2] = np.cos(theta)
+    return t
+
+
+@jit(cache=True, nopython=True)
+def metropolis(reject, deltaE, even=True):
+    """Updates reject in-place using the Metropolis algorithm."""
+    for i in range(0 if even else 1, reject.size, 2):
+        if deltaE[i] < 0:
+            reject[i] = 0.
+        elif deltaE[i] < 16 and np.exp(-deltaE[i]) > np.random.rand():
+            reject[i] = 0.
+
+
+@jit(cache=True, nopython=True)
+def twist_bend_angles(Deltas, squared):
+    u"""Computes twist and bend values for an array of Delta matrices.
+
+    Args:
+        Deltas (Array[float; (L-1, 3, 3)]):
+            Matrices describing relative twist between consecutive rods.
+        squared (bool): Returns
+
+    Returns:
+        (β^2, β^2, Γ^2) if squared is true.
+        (β₁, β₂, Γ) if squared is false.
+        Individual terms are arrays of shape (L-1,).
+
+    Note:
+        See [DS, Appendix D] for equations.
+    """
+    n = len(Deltas)
+    if squared:
+        beta_sq = np.empty(n)
+        Gamma_sq = np.empty(n)
+        for i in range(n):
+            beta_sq[i] = 2.0 * (1.0 - Deltas[i, 2, 2])
+            Gamma_sq[i] = (1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1]
+                           + Deltas[i, 2, 2])
+        # We need to have a dummy value as Numba requires type signatures of
+        # possible return values to be the same.
+        return (beta_sq, beta_sq, Gamma_sq)
+    else:
+        beta_1 = np.empty(n)
+        beta_2 = np.empty(n)
+        Gamma = np.empty(n)
+        for i in range(n):
+            beta_1[i] = (Deltas[i, 1, 2] - Deltas[i, 2, 1]) / 2.0
+            beta_2[i] = (Deltas[i, 2, 0] - Deltas[i, 0, 2]) / 2.0
+            Gamma[i]  = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
+        return (beta_1, beta_2, Gamma)
 
 @jit(cache=True, nopython=True)
 def rotation_matrices(euler):
-    """Computes rotation matrices element-wise.
+    u"""Computes rotation matrices element-wise.
 
-    Assumes: indices 0, 1 and 2 ↔ phi, theta, psi.
+    Args:
+        euler (Array[float; (L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+
+    Returns:
+        Passive rotation matrices in an array of shape (L, 3, 3).
+
+    Note:
+        Represents [DS, Eqn. (B1, B2)].
     """
-    l = len(euler)
-    R = np.empty((l, 3, 3))
-    for i in range(l):
-        phi = euler[i][0]
-        theta = euler[i][1]
-        psi = euler[i][2]
+    n = len(euler)
+    R = np.empty((n, 3, 3))
+    for i in range(n):
+        phi = euler[i, 0]
         cos_phi = np.cos(phi)
         sin_phi = np.sin(phi)
+        theta = euler[i, 1]
         cos_theta = np.cos(theta)
         sin_theta = np.sin(theta)
+        psi = euler[i, 2]
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
         R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
@@ -149,6 +322,7 @@ def eulerMatrixOfAngles(angles):
 
 @jit(cache=True, nopython=True)
 def _AmatrixFromMatrix(entryMatrix):
+    # Numba 0.35.0 supports .transpose() but not np.transpose().
     return _multiplyMatrices3(
         axialRotMatrix(_helix_entry_tilt, 0),
         axialRotMatrix(np.pi, 2),
@@ -160,7 +334,6 @@ def _AmatrixFromMatrix(entryMatrix):
 
 @jit(cache=True, nopython=True)
 def _AmatrixFromAngles(entryangles):
-    # Numba 0.35.0 supports .transpose() but not np.transpose().
     return _AmatrixFromMatrix(eulerMatrixOfAngles(entryangles))
 
 # angles given in order phi, theta, psi
