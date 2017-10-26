@@ -1,13 +1,36 @@
+import chromatinMD as cmd
 import numpy as np
 import utils
+import hypothesis.extra.numpy as hnp
 from hypothesis import given
-from hypothesis.strategies import floats, lists, composite
+from hypothesis.strategies import floats, composite
+
+FINITE_FLOATS = floats(allow_nan=False, allow_infinity=False)
+ANGULAR_FLOATS = floats(
+    min_value=0., max_value=2 * np.pi, allow_nan=False, allow_infinity=False)
+
 
 @composite
-def _float_array(draw, elements=floats(allow_nan=False, allow_infinity=False)):
-    return (lambda n: np.array(draw(lists(elements, min_size=n, max_size=n))))
+def _array(draw, elements=FINITE_FLOATS):
+    return (lambda n: draw(hnp.arrays(float, n, elements=elements)))
 
-@given(_float_array())
+
+@composite
+def _strand_r(draw):
+    def f(n):
+        return draw(_array(ANGULAR_FLOATS))(n)
+
+    def g(n):
+        phi, theta, psi = f((3, n))
+        z = np.cos(theta)
+        x = np.sin(theta) * np.cos(phi)
+        y = np.sin(theta) * np.sin(phi)
+        return np.append(np.cumsum([x, y, z], axis=1), [psi], axis=0).T
+
+    return g
+
+
+@given(_array())
 def test_eulerMatrix(f):
     """Checks that eulerMatrixOfAngles and anglesOfEulerMatrix are inverses."""
     # We compare the rotation matrices and not the angles because several
@@ -18,3 +41,24 @@ def test_eulerMatrix(f):
     x2 = utils.anglesOfEulerMatrix(m1)
     m2 = utils.eulerMatrixOfAngles(x2)
     assert np.allclose(m1, m2, atol=1.E-8)
+
+
+@given(_strand_r())
+def test_derivative_rotation_matrices(f):
+    s = cmd.strand()
+    s.r[:] = f(s.L)
+    t = s.tangent()
+    ang = cmd.angular(s, tangent=t)
+    m1 = ang.derivativeRotationMatrices()
+    m2 = ang.oldDerivativeRotationMatrices()
+    assert np.allclose(m1, m2, atol=1.E-16)
+
+
+@given(_strand_r())
+def test_jacobian(f):
+    s = cmd.strand()
+    s.r[:] = f(s.L)
+    t = s.tangent()
+    m1 = s.jacobian(tangent=t)
+    m2 = s.oldJacobian(tangent=t)
+    assert np.allclose(m1, m2, atol=1.E-12)
