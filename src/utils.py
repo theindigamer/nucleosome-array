@@ -139,12 +139,16 @@ def twist_bend_angles(Deltas, squared):
         squared (bool): Returns
 
     Returns:
-        (β^2, β^2, Γ^2) if squared is true.
+        (β², β², Γ²) if squared is true.
         (β₁, β₂, Γ) if squared is false.
         Individual terms are arrays of shape (L-1,).
 
     Note:
         See [DS, Appendix D] for equations.
+
+        The dummy value of β² is present if squared is true because Numba
+        requires the type signatures of possible return values to be the
+        same.
     """
     n = len(Deltas)
     if squared:
@@ -154,8 +158,6 @@ def twist_bend_angles(Deltas, squared):
             beta_sq[i] = 2.0 * (1.0 - Deltas[i, 2, 2])
             Gamma_sq[i] = (1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1]
                            + Deltas[i, 2, 2])
-        # We need to have a dummy value as Numba requires type signatures of
-        # possible return values to be the same.
         return (beta_sq, beta_sq, Gamma_sq)
     else:
         beta_1 = np.empty(n)
@@ -263,7 +265,7 @@ def axialRotMatrix(theta, axis=2):
     `axis` should be 0 (x), 1 (y) or 2 (z).
     **Warning**: This function does not do input validation.
     """
-    # Using tuples because nested lists don't work with array in Numba 0.35.0
+    # Using tuples because nested lists don't work with np.array in Numba 0.35.0
     if axis == 2:
         rot = np.array((
             ( np.cos(theta), np.sin(theta), 0.),

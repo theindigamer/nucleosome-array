@@ -57,7 +57,7 @@ def save_data(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def run(runs, f, *args, **kwargs):
+def run_sim(runs, f, *args, **kwargs):
     tmp = []
     for _ in range(runs):
         tmp.append(f(*args, **kwargs))
@@ -69,12 +69,32 @@ def run(runs, f, *args, **kwargs):
         results = tmp
     results = utils.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
-        ["run"], [np.arange(runs)]
-    )
+        ["run"], [np.arange(runs)])
     if flag:
         return dnas, results
     else:
         return results
+
+
+def simulate_3rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
+                    T=dnaMC.Environment.ROOM_TEMP, force=0.,
+                    kickSizes=[[0., 0.1, 0.], [0., 0.3, 0.], [0., 0.5, 0.]],
+                    B=43.0):
+    results = []
+    for ks in kickSizes:
+        dna = dnaMC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
+                             strand_len=rod_len * L, B=B)
+        result = dna.relaxationProtocol(
+            force=force, mcSteps=mcSteps, nsamples=nsamples)
+        results.append(result)
+    results = utils.concat_datasets(
+        results, ["angles", "extension", "energy", "acceptance", "timing"],
+        ["kickSize"], [[0.1, 0.3, 0.5]])
+    return results
+
+def simulate_3rods(runs=10, **kwargs):
+    return run_sim(runs, simulate_3rods1, **kwargs)
+
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
@@ -96,7 +116,7 @@ def simulate_dna(runs=5, **kwargs):
         A list of DNA strands in the final state, and the combined results of
         the multiple simulations in one dataset.
     """
-    return run(runs, simulate_dna1, **kwargs)
+    return run_sim(runs, simulate_dna1, **kwargs)
 
 
 def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
@@ -112,8 +132,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     dna = dnaClass(L=L)
     res = dna.torsionProtocol(
         twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
-        mcSteps = mcSteps//2
-    )
+        mcSteps = mcSteps//2)
 
     max_twist_per_rod = 90 * np.pi / 180
     # written this way so it is easier to change the 90 value to something else
@@ -121,9 +140,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
 
     result = dna.torsionProtocol(
         twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
-        mcSteps=mcSteps,
-        nsamples=mcSteps
-    )
+        mcSteps=mcSteps, nsamples=mcSteps)
 
     for k, v in res["timing"].items():
         result["timing"][k] += v
@@ -148,12 +165,8 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     Other arguments are explained under `dnaMC.NucleosomeArray.create`.
     """
     dna = dnaMC.NucleosomeArray.create(
-        nucArrayType=nucArrayType,
-        nucleosomeCount=nucleosomeCount,
-        basePairsPerRod=basePairsPerRod,
-        linker=linker,
-        spacer=spacer
-    )
+        nucArrayType=nucArrayType, nucleosomeCount=nucleosomeCount,
+        basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
     dna.env.T = T
     if protocol == "twist":
         results = dna.torsionProtocol(**protocol_kwargs)
@@ -198,7 +211,7 @@ def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
 
 
 def simulate_diffusion(*args, runs=5, **kwargs):
-    return run(runs, simulate_diffusion1, *args, **kwargs)
+    return run_sim(runs, simulate_diffusion1, *args, **kwargs)
 
 
 def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
@@ -217,22 +230,18 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
         if len(Ts) != len(kickSizes):
             raise ValueError(
                 "The temperature and kick size lists have mismatched sizes."
-                " Did you intend to use mode='product' instead?"
-            )
+                " Did you intend to use mode='product' instead?")
         T_ks = zip(Ts, kickSizes)
     else:
         raise ValueError("Unrecognized value of mode."
                          " Recognized values are 'product' and 'zip'.")
     results = []
-    for (T, kickSize) in T_ks:
-        _, res = simulate_diffusion(*args, **kwargs)
+    for (T, ks) in T_ks:
+        _, res = simulate_diffusion(*args, T=T, kickSize=ks, **kwargs)
         results.append(res.copy())
     results = utils.concat_datasets(
-        results,
-        ["angles", "extension", "energy", "acceptance", "timing"],
-        ["temperature", "kickSize"],
-        [Ts, kickSizes]
-    )
+        results, ["angles", "extension", "energy", "acceptance", "timing"],
+        ["temperature", "kickSize"], [Ts, kickSizes])
     return results
 
 
@@ -298,11 +307,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     print("")
 
     results = utils.concat_datasets(
-        datasets,
-        ["angles", "extension", "energy", "acceptance", "timing"],
-        ["kickSize", "force"],
-        [kickSizes_arr, forces_arr]
-    )
+        datasets, ["angles", "extension", "energy", "acceptance", "timing"],
+        ["kickSize", "force"], [kickSizes_arr, forces_arr])
     results.attrs.update({
         "pre_steps": pre_steps,
         "extra_steps": extra_steps,
@@ -313,7 +319,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
 
 def compute_extension(runs=5, **kwargs):
-    return run(runs, compute_extension1, **kwargs)
+    return run_sim(runs, compute_extension1, **kwargs)
+
 
 
 def draw_force_extension(dataset, acceptance=True):
@@ -329,12 +336,8 @@ def draw_force_extension(dataset, acceptance=True):
     nsamples = dataset.attrs["nsamples"]
 
     fig, axes = plt.subplots(
-        nrows=(2 if acceptance else 1),
-        ncols=kickSizes.size,
-        sharex="row",
-        sharey="row",
-        squeeze=False
-    )
+        nrows=(2 if acceptance else 1), ncols=kickSizes.size,
+        sharex="row", sharey="row", squeeze=False)
     sns.set_style("darkgrid")
     ms_curve_x, ms_curve_y = marko_siggia_curve(B, 740)
 
@@ -362,9 +365,7 @@ def draw_force_extension(dataset, acceptance=True):
         for (j, ks) in enumerate(kickSizes):
             tmp = dataset["acceptance"].sel(kickSize=ks)
             for (j_a, angle) in enumerate(ANGLES_STR):
-                mean, stdev = (lambda x: (x.mean(), x.std()))(
-                    tmp.isel(angle_str=j_a).groupby("force")
-                )
+                mean, stdev = mean_std(tmp.isel(angle_str=j_a).groupby("force"))
                 axes[1, j].errorbar(forces, mean.values, yerr=stdev.values,
                                     label=angle)
                 axes[1, j].set_ylim(bottom=0, top=1)
@@ -433,6 +434,83 @@ def areas(results):
 #--------------------#
 # Plotting functions #
 #--------------------#
+
+from scipy.stats import norm
+
+def draw_angle_probability(dataset, angle_str="theta", run=0):
+    if angle_str == "theta":
+        expected_std = np.sqrt(dataset.attrs["rodLength"]/(2 * dataset.attrs["B"]))
+    elif angle_str == "psi":
+        expected_std = np.sqrt(dataset.attrs["rodLength"]/(2 * dataset.attrs["C"]))
+    else:
+        raise ValueError("Unrecognized string.")
+    # if run == "avg":
+    #     tmp = dataset["angles"].sel(angle_str=angle_str, n=1).mean(dim='run')
+    # else:
+    tmp = dataset["angles"].sel(angle_str=angle_str, n=1, run=run)
+    tmp_std = tmp.std(dim='tsteps')
+    for ks in dataset["kickSize"]:
+        sns.distplot(
+            tmp.sel(kickSize=ks),
+            fit=norm,
+            kde=False,
+            label="kick={0:.1f} rad, std={1:.3f}".format(
+                float(ks), float(tmp_std.sel(kickSize=ks)))
+        )
+    plt.title("Expected std = {0:.3f}".format(expected_std))
+    plt.legend(loc="upper right")
+    plt.show(block=False)
+
+def draw_bend_autocorr(dataset, axis=None, energy=False):
+    if axis is None:
+        flag = True
+        fig, new_axis = plt.subplots()
+    else:
+        flag = False
+        new_axis = axis
+    fig, axes = plt.subplots(
+        nrows=2 if energy else 1, ncols = len(dataset["run"]),
+        sharey='row', squeeze=False)
+    expected_p = dataset.attrs["B"]
+    L = dataset.attrs["rodCount"]
+    x = dataset.attrs["rodLength"] * np.arange(L)
+    # TODO: Replace this with correct correlation function, which will not
+    # be just a pair of exponentials, especially for a small value of L.
+    def f(x, p, strand_len, L):
+        return np.concatenate((
+            np.exp(-x[:L//2 + 1]/p),
+            np.exp(-(strand_len-x[L//2 + 1:])/p)
+        ))
+    y = f(x, expected_p, dataset.attrs["strandLength"], L)
+    for (i, ax) in enumerate(axes[0]):
+        for ks in dataset["kickSize"]:
+            tmp = (dataset["bend_autocorr"]
+                   .isel(tsteps=slice(500, None), run=i)
+                   .sel(kickSize=ks))
+            tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+            ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
+                        capsize=2.0, label=str(ks.values))
+        ax.plot(x, y, label="Expected")
+        ax.set_title("run = {0}".format(i))
+        ax.legend(loc="upper right")
+    axes[0][0].set_ylabel("Tangent vector autocorrelation")
+    axes[0][len(axes[0])//2].set_xlabel("Length (nm)")
+    if energy:
+        for (i, ax) in enumerate(axes[1]):
+            for ks in dataset["kickSize"]:
+                draw_energy_autocorr(
+                    dataset.sel(kickSize=ks).isel(run=slice(i, i+1)), axis=ax)
+        axes[1][0].set_ylabel("Energy autocorrelation")
+        axes[1][len(axes[1])//2].set_xlabel("Time")
+    fig.suptitle(
+        "#rods={1}, Correlation function averaged over t=500 to t={0}".format(
+            int(dataset["tsteps"][-1]), dataset.attrs["rodCount"]))
+    plt.show(block=False)
+    if flag:
+        plt.show(block=False)
+        return (fig, new_axis)
+    else:
+        return axis
 
 # TODO: fix this function to work with datasets
 def plot_angles(dna, result, totalOnly=True, show=True):
