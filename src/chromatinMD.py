@@ -270,7 +270,7 @@ class angular( object ):
         """ Returns rotation matrices along the DNA string"""
         return utils.md_derivative_rotation_matrices(self.euler)
 
-    def effectiveTorques( self, Rs=None, DRs=None ):
+    def oldEffectiveTorques( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""
         RLp1 = np.zeros(( self.L+1, 3, 3))
         if Rs is None:
@@ -292,6 +292,19 @@ class angular( object ):
                     tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
                     tau[1:,i] += c * ( RLp1[2:,j,k] + RLp1[:-2,j,k] ) * DRs[1:,j,k,i]
         return np.roll( tau, 1, axis=1 )
+
+    def effectiveTorques( self, Rs=None, DRs=None ):
+        """ Returns the effective torques per temperature."""
+        RLp1 = np.zeros(( self.L+1, 3, 3))
+        if Rs is None:
+            RLp1[:-1,...] = self.rotationMatrices()
+        else:
+            RLp1[:-1,...] = Rs
+        RLp1[-1,...] = self.RL
+
+        if DRs is None: DRs = self.derivativeRotationMatrices()
+
+        return utils.md_effective_torques(RLp1, DRs, self.L, self.C, self.B, self.d)
 
     def deltaMatrices( self, Rs=None ):
         """ Returns delta matrices. """

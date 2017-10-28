@@ -436,3 +436,19 @@ def md_derivative_rotation_matrices(euler):
         DR[i, 2, 2, 1] = -sin_theta
         DR[i, 2, 2, 2] = 0.
     return DR
+
+@jit(cache=True, nopython=True)
+def md_effective_torques(RLp1, DRs, L, C, B, d):
+    tau = np.zeros((L, 4))
+    c1 = - (C + 2. * B) / (2. * d)
+    c2 = - C / (2. * d)
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+                if k==2:
+                    c = c1
+                else:
+                    c = c2
+                tau[0, i + 1] += c * (RLp1[1, j, k] + j * k) * DRs[0, j, k, i]
+                tau[1:, i + 1] += c * (RLp1[2:, j, k] + RLp1[:-2, j, k]) * DRs[1:, j, k, i]
+    return tau
