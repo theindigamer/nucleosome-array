@@ -192,12 +192,15 @@ def rotation_matrices(euler):
         psi = euler[i, 2]
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
+
         R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
         R[i, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
         R[i, 0, 2] = sin_theta * sin_phi
+
         R[i, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
         R[i, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
         R[i, 1, 2] = cos_phi * sin_theta
+
         R[i, 2, 0] = sin_theta * sin_psi
         R[i, 2, 1] = -cos_psi * sin_theta
         R[i, 2, 2] = cos_theta
@@ -349,3 +352,87 @@ def exitAngles(entryangles):
 def calc_deltas(deltas, nucs, Rs):
     for i in nucs:
         deltas[i] = _multiplyMatrices3(_nf_tf_matrix, _AmatrixFromMatrix(Rs[i-1]), Rs[i])
+
+@jit(cache=True, nopython=True)
+def md_jacobian(tangent):
+    n = len(tangent)
+    J = np.empty((n, 4, 4))
+    for i in range(n):
+        t = tangent[i]
+        D_sq = t[0]**2 + t[1]**2 + t[2]**2
+        D = np.sqrt(D_sq)
+        p_sq = t[0]**2 + t[1]**2 + 1.E-16
+        p = np.sqrt(p_sq)
+
+        J[i, 0, 0] = -t[0] / D
+        J[i, 0, 1] = -t[1] / D
+        J[i, 0, 2] = -t[2] / D
+        J[i, 0, 3] = 0.
+
+        J[i, 1, 0] = -t[1] / p_sq
+        J[i, 1, 1] = +t[0] / p_sq
+        J[i, 1, 2] = 0.
+        J[i, 1, 3] = 0.
+
+        J[i, 2, 0] = -t[0] * t[2] / (p * D_sq)
+        J[i, 2, 1] = -t[1] * t[2] / (p * D_sq)
+        J[i, 2, 2] = p / D_sq
+        J[i, 2, 3] = 0.
+
+        J[i, 3, 0] = 0.
+        J[i, 3, 1] = 0.
+        J[i, 3, 2] = 0.
+        J[i, 3, 3] = 0.
+    return J
+
+@jit(cache=True, nopython=True)
+def md_derivative_rotation_matrices(euler):
+    n = len(euler)
+    DR = np.empty((n, 3, 3, 3))
+    for i in range(n):
+        phi = euler[i, 0]
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        theta = euler[i, 1]
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        psi = euler[i, 2]
+        cos_psi = np.cos(psi)
+        sin_psi = np.sin(psi)
+
+        DR[i, 0, 0, 0] = -sin_phi * cos_psi - cos_phi * cos_theta * sin_psi
+        DR[i, 0, 0, 1] = sin_phi * sin_theta * sin_psi
+        DR[i, 0, 0, 2] = -sin_phi * cos_theta * cos_psi - cos_phi * sin_psi
+
+        DR[i, 0, 1, 0] = cos_phi * cos_theta * cos_psi - sin_phi * sin_psi
+        DR[i, 0, 1, 1] = -sin_phi * sin_theta * cos_psi
+        DR[i, 0, 1, 2] = cos_phi * cos_psi - sin_phi * cos_theta * sin_psi
+
+        DR[i, 0, 2, 0] = cos_phi * sin_theta
+        DR[i, 0, 2, 1] = sin_phi * cos_theta
+        DR[i, 0, 2, 2] = 0.
+
+        DR[i, 1, 0, 0] = -cos_phi * cos_psi + sin_phi * cos_theta * sin_psi
+        DR[i, 1, 0, 1] = cos_phi * sin_theta * sin_psi
+        DR[i, 1, 0, 2] = -cos_phi * cos_theta * cos_psi + sin_phi * sin_psi
+
+        DR[i, 1, 1, 0] = -sin_phi * cos_theta * cos_psi - cos_phi * sin_psi
+        DR[i, 1, 1, 1] = -cos_phi * sin_theta * cos_psi
+        DR[i, 1, 1, 2] = -sin_phi * cos_psi - cos_phi * cos_theta * sin_psi
+
+        DR[i, 1, 2, 0] = -sin_phi * sin_theta
+        DR[i, 1, 2, 1] = cos_phi * cos_theta
+        DR[i, 1, 2, 2] = 0.
+
+        DR[i, 2, 0, 0] = 0.
+        DR[i, 2, 0, 1] = cos_theta * sin_psi
+        DR[i, 2, 0, 2] = sin_theta * cos_psi
+
+        DR[i, 2, 1, 0] = 0.
+        DR[i, 2, 1, 1] = -cos_theta * cos_psi
+        DR[i, 2, 1, 2] = sin_theta * sin_psi
+
+        DR[i, 2, 2, 0] = 0.
+        DR[i, 2, 2, 1] = -sin_theta
+        DR[i, 2, 2, 2] = 0.
+    return DR
