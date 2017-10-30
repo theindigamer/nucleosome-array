@@ -528,6 +528,131 @@ def plot_angles(dna, result, totalOnly=True, show=True):
     if show:
         plt.show()
 
+def draw_energy(dataset, axis=None, show=None):
+    flag = axis is None
+    if flag:
+        fig, axis = plt.subplots()
+    # else:
+    #     new_axis = axis
+    tsteps = dataset["tsteps"]
+    mean, stdev = mean_std(dataset["energy"].sel(tsteps=tsteps), dim=['run'])
+    if len(np.shape(mean)) != 1:
+        print("WARNING: draw_energy encountered unexpected dimensions"
+              " after averaging over runs.")
+    axis.errorbar(tsteps.values, mean.values, yerr=stdev.values, capsize=2.)
+    if flag:
+        return (fig, axis)
+    return axis
+
+
+def draw_angle_profile(dataset, axis=None, total_only=False, show=None):
+
+    def tsteps_slice(ndraw):
+        nonlocal dataset
+        n = len(dataset["tsteps"])
+        if ndraw > n:
+            ndraw = n
+            print("WARNING: attempting to draw at more points than sampled.")
+        return dataset["tsteps"][::n//ndraw]
+
+    if axis is None:
+        fig, new_axis = plt.subplots()
+    else:
+        new_axis = axis
+
+    if show is None:
+        ndraw = 5
+        tsteps = tsteps_slice(ndraw)
+    elif isinstance(show, int):
+        ndraw = show
+        tsteps = tsteps_slice(ndraw)
+    elif show == "all":
+        tsteps = dataset["tsteps"]
+    else:
+        raise ValueError("show should be one of None, int (> 0) or the string 'all'.")
+
+    mean, stdev = mean_std(dataset["angles"].sel(tsteps=tsteps)/(2*np.pi), dim=['run'])
+    if len(np.shape(mean)) != 3: # one for time, one for rods, one for 3 angles
+        print("WARNING: draw_angle_profile encountered unexpected dimensions"
+              " after averaging over runs.")
+    x = np.arange(dataset.attrs["rodCount"])
+    # if not total_only:
+    #     for (i, a) in enumerate(ANGLES_STR):
+    #         new_axis.errorbar(x, mean.isel(angle_str=i),
+    #                           yerr=stdev.isel(angle_str=i), label=a)
+    # TODO: replace phi + psi (as a proxy) with actual twist value
+    # ? How to compute total twist from phi, theta, psi values
+    for tstep in tsteps:
+        tmp_mean, tmp_std = mean.sel(tsteps=tstep), stdev.sel(tsteps=tstep)
+        new_axis.plot(
+            x, tmp_mean.isel(angle_str=0) + tmp_mean.isel(angle_str=2),
+            # yerr=(tmp_std.isel(angle_str=0)**2 + tmp_std.isel(angle_str=2)**2)**0.5,
+            label=("t = " + str(tstep.values)))
+    new_axis.legend(loc="upper left")
+    new_axis.set_ylabel("Angle/2π radians")
+    new_axis.set_xlabel("Rod number")
+    if axis is None:
+        return (fig, new_axis)
+    else:
+        return axis
+
+
+def draw_energy_autocorr(dataset, axis=None):
+    if axis is None:
+        fig, new_axis = plt.subplots()
+    else:
+        new_axis = axis
+    tsteps = dataset["tsteps"]
+    en = dataset["energy"].values
+    en_k = np.fft.fft(en, axis=-1)
+    en_corr = np.fft.ifft((en_k * en_k.conj()), axis=-1).real
+    corr_ds = xr.DataArray(en_corr, coords=dataset["energy"].coords,
+                           attrs=dataset["energy"].attrs)
+    # TODO: StackOverflow - ? easier way to cast fft over dataset.
+    mean, stdev = mean_std(corr_ds, dim=['run'])
+    # TODO: add fitting+plotting code to determine+display correlation time
+    if len(np.shape(mean)) != 1:
+        print("WARNING: draw_energy encountered unexpected dimensions"
+              " after averaging over runs.")
+    # new_axis.plot(np.log10(tsteps.values), np.log10(mean.values))
+    new_axis.errorbar(tsteps.values, mean.values,# yerr=stdev.values,
+                      capsize=2.)
+    if axis is None:
+        return (fig, new_axis)
+    else:
+        return axis
+
+
+def draw_acceptance(dataset, axis=None):
+    if axis is None:
+        fig, new_axis = plt.subplots()
+    else:
+        new_axis = axis
+    for (i, a) in enumerate(ANGLES_STR):
+        mean, stdev = mean_std(dataset["acceptance"].isel(angle_str=i),
+                               dim=["run"])
+        new_axis.errorbar(
+            dataset["tsteps"].values, mean.values, yerr=stdev.values, label=a)
+    new_axis.legend(loc="upper right")
+    new_axis.set_xlabel("Time (Monte Carlo steps)")
+    new_axis.set_ylabel("Acceptance probability")
+    if axis is None:
+        return (fig, new_axis)
+    else:
+        return axis
+
+
+def draw_diffusion(dataset):
+    # nrows = int(np.sqrt(len(plots)))
+    # ncols = nrows if plots % nrows == 0 else nrows + 1
+    fig, ax = plt.subplots(nrows=2, ncols=3, squeeze=False)
+    draw_angle_profile(dataset, ax[0][1])
+    # draw_bend_twist(dataset, ax[0][2])
+    # draw_sigma_fit(dataset, ax[0][0])
+    draw_acceptance(dataset, ax[1][0])
+    draw_energy(dataset, ax[1][1])
+    draw_energy_autocorr(dataset, ax[1][2])
+
 # TODO: fix this function to work with datasets
 def plot_evolution(results, show=True, fits=None):
     """Make a plot of angles as a function of x (rod number) at different times.
@@ -548,6 +673,17 @@ def plot_evolution(results, show=True, fits=None):
 
 def diffusionSigma(logt, D, power):
     return power*(log10(2*D) + logt)
+
+
+# TODO: Show a plot of log log plot of sigma vs t and compute D.
+def draw_sigma_fit(dataset, axis=None):
+    raise NotImplementedError()
+
+
+# TODO: Show a plot of β and Γ values.
+def draw_bend_twist(dataset, axis=None):
+    raise NotImplementedError()
+
 
 def fitSigma(params, full_tsteps, show=True, start=0):
     """Checks if the scale factor depends as a power law on time."""
