@@ -3,9 +3,107 @@ from numba import jit
 import xarray as xr
 from copy import copy
 
+
 #-------------------#
 # Data manipulation #
 #-------------------#
+
+
+def autocorr_fft(arr):
+    L = arr.shape[-2]
+    lengths = arr.shape[:-2]
+    tangents = np.empty_like(arr)
+    for inds in np.ndindex(lengths):
+        tangents[inds] = tangent_vector(arr[inds])
+    tmpk = np.fft.rfft(tangents, axis=-2)
+    corr = np.fft.irfft(tmpk * tmpk.conj(), axis=-2)
+    # needs additional normalization after summing
+    return np.sum(corr, axis=-1)/L
+
+
+@jit(cache=True, nopython=True)
+def autocorr_brute_force(arr):
+    L = arr.shape[-2]
+    lengths = arr.shape[:-2]
+    tangents = np.empty_like(arr)
+    arr3 = 0. * arr
+    counters = np.zeros(L)
+    for m in range(L):
+        for n in range(m, L):
+            counters[n - m] += 1
+    for inds in np.ndindex(lengths):
+        tangents[inds] = tangent_vector(arr[inds])
+        for m in range(L):
+            for n in range(m, L):
+                arr3[inds][n - m] += tangents[inds][m] * tangents[inds][n]
+        for i in range(3):
+            arr3[inds][:, i] /= counters
+    return np.sum(arr3, axis=-1)
+
+
+def bend_angles(arr, axis=-1, n_axis=-2):
+    u"""
+    Computes successive bends using the formula β_i = θ_{i+1} - θ_i.
+    So this function works correctly only if the other angles are fixed to zero.
+    """
+    if (arr[..., 0] == 0.).all() and (arr[..., 2] == 0.).all():
+        shape = np.shape(arr)
+        if axis == len(shape) - 1 and n_axis == axis - 1:
+            arr2 = np.empty(shape[:-1])
+            arr2[..., -1] = 0.
+            arr2[..., :-1] = arr[..., 1:, 1] - arr[..., :-1, 1]
+            return arr2
+        else:
+            raise ValueError("Code assumes that last axis is 'angle_str' and the"
+                             " penultimate axis is 'n'.")
+    else:
+        raise ValueError(u"Code assumes that angles other than θ are all zero.")
+
+
+def bend_autocorr(arr, axis=None, n_axis=None, method="fft"):
+    """
+    Args:
+        arr (ndarray): Dataset with last axis
+        axis (int): Should be the last axis of arr. This kwargs is required
+                    by xarray's reduce operation (the dim kwarg for reduce
+                    gets mapped to axis). It corresponds to the three angles.
+        n_axis (int): Should be the second last axis of arr. This corresponds
+                      to rod number.
+        method (str): One of "fft" or "brute force".
+    """
+    shape = np.shape(arr)
+    if axis == len(shape) - 1 and n_axis == axis - 1:
+        if method == "fft":
+            return autocorr_fft(arr)
+        elif method == "brute force":
+            return autocorr_brute_force(arr)
+        else:
+            raise ValueError("Unrecognized method argument.")
+    else:
+        raise ValueError("Code assumes that last axis is 'angle_str' and the"
+                         " penultimate axis is rod number.")
+
+
+def compute_bend_autocorr(dataset, method="fft"):
+    return (dataset["angles"].copy()
+            .reduce(bend_autocorr, dim="angle_str",
+                    n_axis=dataset["angles"].get_axis_num('n'), method=method)
+            .rename("bend_autocorr"))
+
+
+def add_bend_autocorr(dataset, method="fft"):
+    da = compute_bend_autocorr(dataset, method=method)
+    da2 = (dataset["angles"].copy()
+           .reduce(bend_angles, dim="angle_str",
+                   n_axis=dataset["angles"].get_axis_num('n'))
+           .rename("bend_angle"))
+    ds = xr.merge([dataset, da, da2])
+    # For some reason, the merge function destroys attributes.
+    # See https://github.com/pydata/xarray/issues/1614 and links therein.
+    # So we copy the attributes separately.
+    ds.attrs = dataset.attrs
+    return ds
+
 
 def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
                     concat_attrs=[]):
@@ -45,7 +143,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
                          " number of coordinate lists. This mismatch might have"
                          " happened if you forgot to wrap new_dims or"
                          " new_coords in a list.")
-    lens = tuple(map(len, new_coords))
+    lengths = tuple(map(len, new_coords))
 
     # Some data variables and attributes are shared across datasets, so these
     # will not get a nested structure.
@@ -61,7 +159,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
     ds = np.empty(len(datasets), dtype="object")
     for (i, d) in enumerate(datasets):
         ds[i] = d
-    ds = np.reshape(ds, lens)
+    ds = np.reshape(ds, lengths)
 
     def f(datasets, new_dims, new_coords):
         if len(new_dims) == 1:
@@ -121,7 +219,25 @@ def tangent_vector(euler):
 
 @jit(cache=True, nopython=True)
 def metropolis(reject, deltaE, even=True):
-    """Updates reject in-place using the Metropolis algorithm."""
+    """Updates reject in-place using the Metropolis algorithm.
+
+    Args:
+        reject (Array[float; (x,)]):
+            Array to be modified in-place. If even is True, it is assumed that
+            reject has 1.0 at even indices and similarly when even is False.
+        deltaE (Array[float; (x,)]):
+            Local energy changes used to check for rejection. Energy should be
+            in units of kT.
+        even (bool): Indicates if even/odd indices of deltaE should be checked.
+
+    Returns:
+        None
+
+    Note:
+        The x in the sizes indicates that the two array sizes have to be equal.
+        For example, you will have x = L - 2 when the two rods at the end have
+        fixed orientation.
+    """
     for i in range(0 if even else 1, reject.size, 2):
         if deltaE[i] < 0:
             reject[i] = 0.

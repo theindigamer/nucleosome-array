@@ -26,6 +26,10 @@ ANGLES_STR = ["φ", "θ", "ψ"]
 def mean_std(x, **kwargs):
     return (x.mean(**kwargs), x.std(**kwargs))
 
+def _norm(da, dim='axis')
+    """Computes the Euclidean norm of a DataArray along a dimension."""
+    return ((da**2).sum(dim=dim))**0.5
+
 #-------------------#
 # Utility functions #
 #-------------------#
@@ -76,10 +80,10 @@ def run_sim(runs, f, *args, **kwargs):
         return results
 
 
-def simulate_3rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
-                    T=dnaMC.Environment.ROOM_TEMP, force=0.,
-                    kickSizes=[[0., 0.1, 0.], [0., 0.3, 0.], [0., 0.5, 0.]],
-                    B=43.0):
+def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
+                T=dnaMC.Environment.ROOM_TEMP, force=0.,
+                kickSizes=[[0., 0.1, 0.], [0., 0.3, 0.], [0., 0.5, 0.]],
+                B=43.0):
     results = []
     for ks in kickSizes:
         dna = dnaMC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
@@ -92,8 +96,9 @@ def simulate_3rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
         ["kickSize"], [[0.1, 0.3, 0.5]])
     return results
 
-def simulate_3rods(runs=10, **kwargs):
-    return run_sim(runs, simulate_3rods1, **kwargs)
+
+def relax_rods(runs=10, **kwargs):
+    return run_sim(runs, relax_rods1, **kwargs)
 
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
@@ -322,7 +327,6 @@ def compute_extension(runs=5, **kwargs):
     return run_sim(runs, compute_extension1, **kwargs)
 
 
-
 def draw_force_extension(dataset, acceptance=True):
     kickSizes = dataset.coords["kickSize"].values
     forces = dataset.coords["force"].values
@@ -344,7 +348,7 @@ def draw_force_extension(dataset, acceptance=True):
     for (j, ks) in enumerate(kickSizes):
         # 'axis' dimension is the last dimension
         # there doesn't seem to be a simple way to broadcast np.linalg.norm
-        tmp = ((dataset["extension"].sel(kickSize=ks)**2).sum(dim='axis'))**0.5
+        tmp = _norm(dataset["extension"].sel(kickSize=ks), dim='axis')
         mean, stdev = mean_std(tmp.groupby("force"))
         print(mean.values)
         print(forces)
@@ -461,17 +465,13 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
     plt.legend(loc="upper right")
     plt.show(block=False)
 
-def draw_bend_autocorr(dataset, axis=None, energy=False):
-    if axis is None:
-        flag = True
-        fig, new_axis = plt.subplots()
-    else:
-        flag = False
-        new_axis = axis
+def draw_bend_autocorr(dataset, energy=False):
     fig, axes = plt.subplots(
         nrows=2 if energy else 1, ncols = len(dataset["run"]),
         sharey='row', squeeze=False)
-    expected_p = dataset.attrs["B"]
+    # NOTE: There is a factor of 2 when only θ is changing and other two angles
+    # are fixed.
+    expected_p = 2 * dataset.attrs["B"]
     L = dataset.attrs["rodCount"]
     x = dataset.attrs["rodLength"] * np.arange(L)
     # TODO: Replace this with correct correlation function, which will not
@@ -490,10 +490,11 @@ def draw_bend_autocorr(dataset, axis=None, energy=False):
             tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
                         capsize=2.0, label=str(ks.values))
+            ax.set_yscale('log')
         ax.plot(x, y, label="Expected")
         ax.set_title("run = {0}".format(i))
         ax.legend(loc="upper right")
-    axes[0][0].set_ylabel("Tangent vector autocorrelation")
+    axes[0][0].set_ylabel("log(Tangent vector autocorrelation)")
     axes[0][len(axes[0])//2].set_xlabel("Length (nm)")
     if energy:
         for (i, ax) in enumerate(axes[1]):
@@ -506,11 +507,8 @@ def draw_bend_autocorr(dataset, axis=None, energy=False):
         "#rods={1}, Correlation function averaged over t=500 to t={0}".format(
             int(dataset["tsteps"][-1]), dataset.attrs["rodCount"]))
     plt.show(block=False)
-    if flag:
-        plt.show(block=False)
-        return (fig, new_axis)
-    else:
-        return axis
+    return (fig, axes)
+
 
 # TODO: fix this function to work with datasets
 def plot_angles(dna, result, totalOnly=True, show=True):
