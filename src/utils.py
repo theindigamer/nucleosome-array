@@ -449,6 +449,7 @@ def md_effective_torques(RLp1, DRs, L, C, B, d):
                     c = c1
                 else:
                     c = c2
-                tau[0, i + 1] += c * (RLp1[1, j, k] + j * k) * DRs[0, j, k, i]
+                delta_jk = 1. if j == k else 0.
+                tau[0, i + 1] += c * (RLp1[1, j, k] + delta_jk) * DRs[0, j, k, i]
                 tau[1:, i + 1] += c * (RLp1[2:, j, k] + RLp1[:-2, j, k]) * DRs[1:, j, k, i]
     return tau
