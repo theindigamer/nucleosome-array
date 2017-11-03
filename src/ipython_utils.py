@@ -10,6 +10,7 @@ import scipy
 from scipy.optimize import curve_fit
 import xarray as xr
 
+import joblib
 import json
 import pickle
 
@@ -61,10 +62,12 @@ def save_data(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def run_sim(runs, f, *args, **kwargs):
-    tmp = []
-    for _ in range(runs):
-        tmp.append(f(*args, **kwargs))
+def run_sim(parallel, runs, f, *args, **kwargs):
+    if parallel:
+        tmp = joblib.Parallel(n_jobs=runs)(joblib.delayed(f)(*args, **kwargs)
+                                           for _ in range(runs))
+    else:
+        tmp = [f(*args, **kwargs) for _ in range(runs)]
     if isinstance(tmp[0], tuple):
         flag = True
         dnas, results = list(zip(*tmp))
@@ -98,7 +101,7 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
 
 
 def relax_rods(runs=10, **kwargs):
-    return run_sim(runs, relax_rods1, **kwargs)
+    return run_sim(True, runs, relax_rods1, **kwargs)
 
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
@@ -464,6 +467,40 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
     plt.title("Expected std = {0:.3f}".format(expected_std))
     plt.legend(loc="upper right")
     plt.show(block=False)
+
+
+def draw_binned_bend_autocorr(dataset):
+    # NOTE: There is a factor of 2 when only θ is changing and other two angles
+    # are fixed.
+    expected_p = 2 * dataset.attrs["B"]
+    L = dataset.attrs["rodCount"]
+    x = dataset.attrs["rodLength"] * np.arange(L)
+    # TODO: Replace this with correct correlation function, which will not
+    # be just a pair of exponentials, especially for a small value of L.
+    def f(x, p, strand_len, L):
+        return np.concatenate((
+            np.exp(-x[:L//2 + 1]/p),
+            np.exp(-(strand_len-x[L//2 + 1:])/p)
+        ))
+    y = f(x, expected_p, dataset.attrs["strandLength"], L)
+    t = dataset['tsteps']
+    start = 0
+    step = t[-1] // 5
+    stop = t[-1] + step
+    tmp = (dataset["bend_autocorr"]
+           .isel(kickSize=0, run=slice(min(5, dataset["run"][-1])))
+           .groupby_bins('tsteps', np.arange(start, stop, step))
+           .mean(dim='tsteps')
+           .to_dataframe())
+    tmp.reset_index(level=tmp.index.names, inplace=True)
+    tmp['n'] = tmp['n'] * dataset.attrs["rodLength"]
+    g = sns.FacetGrid(tmp, col='tsteps_bins', row='run')
+    g = g.map(plt.plot, 'n', 'bend_autocorr')
+    for ax in np.reshape(g.axes, (-1,)):
+        ax.plot(x, y, color='green', label="Naive")
+    plt.show(g)
+    return tmp
+
 
 def draw_bend_autocorr(dataset, energy=False):
     fig, axes = plt.subplots(

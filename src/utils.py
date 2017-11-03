@@ -8,6 +8,17 @@ from copy import copy
 # Data manipulation #
 #-------------------#
 
+def generate_rw(d, B, count, L):
+    sigma = np.sqrt(d / B)
+    a = np.empty((count, L - 1))
+    beta[:, 0] = 0.
+    beta[:, 1:] = sigma * np.random.randn(count, L - 2)
+    theta = np.cumsum(beta, axis=1)
+    # Last angle might be non-zero now, so we fix that with linear scaling.
+    for x in range(1, L - 1):
+        theta[:, x] = theta[:, x] - x * theta[:, -1] / (L - 2)
+    return theta
+
 
 def autocorr_fft(arr):
     L = arr.shape[-2]
