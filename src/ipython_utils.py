@@ -26,7 +26,7 @@ ANGLES_STR = ["φ", "θ", "ψ"]
 def mean_std(x, **kwargs):
     return (x.mean(**kwargs), x.std(**kwargs))
 
-def _norm(da, dim='axis')
+def _norm(da, dim='axis'):
     """Computes the Euclidean norm of a DataArray along a dimension."""
     return ((da**2).sum(dim=dim))**0.5
 
@@ -93,7 +93,7 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
         results.append(result)
     results = utils.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
-        ["kickSize"], [[0.1, 0.3, 0.5]])
+        ["kickSize"], [np.array(kickSizes)[:, 1]])
     return results
 
 
@@ -485,15 +485,14 @@ def draw_bend_autocorr(dataset, energy=False):
     for (i, ax) in enumerate(axes[0]):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]
-                   .isel(tsteps=slice(500, None), run=i)
-                   .sel(kickSize=ks))
+                   .sel(run=i, kickSize=ks, tsteps=slice(500, None)))
             tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
                         capsize=2.0, label=str(ks.values))
             ax.set_yscale('log')
-        ax.plot(x, y, label="Expected")
-        ax.set_title("run = {0}".format(i))
-        ax.legend(loc="upper right")
+        ax.plot(x, y, label="Naive")
+        ax.set_title("Run# = {0}".format(i))
+        ax.legend(loc="lower right")
     axes[0][0].set_ylabel("log(Tangent vector autocorrelation)")
     axes[0][len(axes[0])//2].set_xlabel("Length (nm)")
     if energy:

@@ -302,8 +302,9 @@ class NakedDNA:
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
-    def metropolisUpdate(self, force, E0, acceptance=False):
+    def metropolis_update_slow(self, force, E0, acceptance=False):
         """ Updates dnaClass Euler angles using Metropolis algorithm.
+        This will do updates one at a time instead of multiple ones together.
         Returns the total energy density.
         Temperature T is in Kelvin.
         """
@@ -311,7 +312,25 @@ class NakedDNA:
         timers = self.sim.timers
 
         moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
-        moves[np.abs(moves) >= 5.0*sigma] = 0
+        moves[np.abs(moves) >= 5.0*sigma] = 0.
+        if acceptance:
+            accepted_frac = np.zeros(3)
+        random_rod = np.random.randint(1, high=self.L - 1, size=self.L - 2)
+
+        # for move in moves:
+
+    def metropolis_update(self, force, E0, acceptance=False):
+        """ Updates dnaClass Euler angles using Metropolis algorithm.
+        This is done in two sweeps, first the even-numbered ones and then the
+        odd-numbered ones.
+        Returns the total energy density.
+        Temperature T is in Kelvin.
+        """
+        sigma = self.sim.kickSize
+        timers = self.sim.timers
+
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves[np.abs(moves) >= 5.0*sigma] = 0.
         if acceptance:
             accepted_frac = np.zeros(3)
 
@@ -367,8 +386,8 @@ class NakedDNA:
         """Monte Carlo relaxation using Metropolis algorithm."""
         if record_final_only:
             for _ in range(mcSteps - 1):
-                E0 = self.metropolisUpdate(force, E0, acceptance=False)
-            E0, acc = self.metropolisUpdate(force, E0, acceptance=True)
+                E0 = self.metropolis_update(force, E0, acceptance=False)
+            E0, acc = self.metropolis_update(force, E0, acceptance=True)
             return E0, self.totalExtension(), acc
         else:
             energies = np.empty((mcSteps, self.L))
@@ -376,7 +395,7 @@ class NakedDNA:
             acceptance_ratios = np.empty((mcSteps, 3))
             for i in range(mcSteps):
                 E0, acceptance_ratios[i] = (
-                    self.metropolisUpdate(force, E0, acceptance=True)
+                    self.metropolis_update(force, E0, acceptance=True)
                 )
                 energies[i] = E0
                 extensions[i] = self.totalExtension()
