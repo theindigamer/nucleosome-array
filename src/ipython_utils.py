@@ -469,20 +469,86 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
     plt.show(block=False)
 
 
-def draw_binned_bend_autocorr(dataset):
+def run_bend_autocorr_rw(count=100, d=5, B=40, L=128):
+    theta = utils.generate_rw_2d(d, B, count, L)
+    phi = np.zeros((count, L))
+    psi = np.zeros((count, L))
+    total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
+    print(np.shape(total))
+    ac = utils.bend_autocorr(total, axis=2, n_axis=1)
+    ac = np.array([[ac]])
+    # Create fake information for dataset, so that
+    # 1. we can reuse the drawing functions which work for simulations directly
+    # 2. we can reuse parts of those drawing functions if we want slightly
+    #    different drawings.
+    run = np.array([0])
+    kickSize = np.array([np.NaN])
+    tsteps = np.arange(count)
+    ac = xr.DataArray(
+        ac,
+        coords=(run, kickSize, tsteps, np.arange(L)),
+        dims=("run", "kickSize", "tsteps", "n"),
+        name="bend_autocorr"
+    )
+    ac = ac.to_dataset()
+    ac.attrs = {
+        "rodLength": d,
+        "rodCount": L,
+        "B": B,
+        "strandLength": d * L,
+        "remark": "Random Walk",
+    }
+    return ac
+
+
+def draw_bend_autocorr_rw(dataset):
+    # shape = np.shape(autocorr.values)
+    count = dataset["tsteps"].size
+    tmp = 100
+    display_counts = []
+    while tmp <= count:
+        display_counts.append(tmp)
+        tmp = int(tmp * np.sqrt(10))
+    L = dataset.attrs["rodCount"]
+    x = dataset.attrs["rodLength"] * np.arange(L)
+    # NOTE: There is a factor of 2 when only θ is changing and other two angles
+    # are fixed.
+    expected_p = 2 * dataset.attrs["B"]
+    L = dataset.attrs["rodCount"]
+    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
+    fig, axes = plt.subplots(
+        ncols = len(display_counts), sharey='row', squeeze=False)
+    for ax, count in zip(axes[0], display_counts):
+        tmp = (dataset["bend_autocorr"]
+               .isel(run=0, kickSize=0, tsteps=slice(count)))
+        tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+        ax.errorbar(x, tmp_mean.values, #yerr=tmp_std.values,
+                    capsize=2.0, label="RW", color="red"
+        )
+        ax.plot(x, y, label="Naive", color="green")
+        ax.set_title("avg over {0} RWs".format(count))
+        ax.legend(loc="lower right")
+    fig.suptitle(
+        "#rods={0}, Correlation function averaged over random walks.".format(
+            dataset.attrs["rodCount"]))
+    plt.show(block=False)
+    return (fig, axes)
+
+def naive_autocorr(x, P, strand_len, L):
+    return np.concatenate((
+        np.exp(-x[:L//2 + 1]/P),
+        np.exp(-(strand_len-x[L//2 + 1:])/P)
+    ))
+
+
+def draw_binned_bend_autocorr(dataset, sim_curve=None):
+    """Draws the bending autocorrelation averaged over time bins."""
     # NOTE: There is a factor of 2 when only θ is changing and other two angles
     # are fixed.
     expected_p = 2 * dataset.attrs["B"]
     L = dataset.attrs["rodCount"]
     x = dataset.attrs["rodLength"] * np.arange(L)
-    # TODO: Replace this with correct correlation function, which will not
-    # be just a pair of exponentials, especially for a small value of L.
-    def f(x, p, strand_len, L):
-        return np.concatenate((
-            np.exp(-x[:L//2 + 1]/p),
-            np.exp(-(strand_len-x[L//2 + 1:])/p)
-        ))
-    y = f(x, expected_p, dataset.attrs["strandLength"], L)
+    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
     t = dataset['tsteps']
     start = 0
     step = t[-1] // 5
@@ -493,11 +559,19 @@ def draw_binned_bend_autocorr(dataset):
            .mean(dim='tsteps')
            .to_dataframe())
     tmp.reset_index(level=tmp.index.names, inplace=True)
-    tmp['n'] = tmp['n'] * dataset.attrs["rodLength"]
-    g = sns.FacetGrid(tmp, col='tsteps_bins', row='run')
-    g = g.map(plt.plot, 'n', 'bend_autocorr')
-    for ax in np.reshape(g.axes, (-1,)):
-        ax.plot(x, y, color='green', label="Naive")
+    tmp['s'] = pd.Series(tmp['n'] * dataset.attrs["rodLength"], index=tmp.index)
+    g = sns.FacetGrid(tmp, col='tsteps_bins', row='run', margin_titles=True)
+    g = g.map(plt.plot, 's', 'bend_autocorr')
+    if sim_curve is not None:
+        y2 = (sim_curve["bend_autocorr"]
+              .isel(run=0, kickSize=0, tsteps=slice(1000))
+              .mean(dim='tsteps'))
+        for ax in np.reshape(g.axes, (-1,)):
+            ax.plot(x, y2, color='red', label="1k RW")
+    else:
+        for ax in np.reshape(g.axes, (-1,)):
+            ax.plot(x, y, color='green', label="Naive")
+    g = g.add_legend()
     plt.show(g)
     return tmp
 
@@ -511,14 +585,7 @@ def draw_bend_autocorr(dataset, energy=False):
     expected_p = 2 * dataset.attrs["B"]
     L = dataset.attrs["rodCount"]
     x = dataset.attrs["rodLength"] * np.arange(L)
-    # TODO: Replace this with correct correlation function, which will not
-    # be just a pair of exponentials, especially for a small value of L.
-    def f(x, p, strand_len, L):
-        return np.concatenate((
-            np.exp(-x[:L//2 + 1]/p),
-            np.exp(-(strand_len-x[L//2 + 1:])/p)
-        ))
-    y = f(x, expected_p, dataset.attrs["strandLength"], L)
+    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
     for (i, ax) in enumerate(axes[0]):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]

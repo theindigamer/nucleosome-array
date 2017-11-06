@@ -8,15 +8,27 @@ from copy import copy
 # Data manipulation #
 #-------------------#
 
-def generate_rw(d, B, count, L):
+def generate_rw_2d(d, B, count, L):
+    """Generates random walks in 2D with the right boundary conditions.
+
+    Args:
+        d (float): length of 1 rod in nm
+        B (float): usual bending constant in nm kT
+        count (int): number of random walks to generate
+        L (int): number of rods
+
+    Returns:
+        Array of θ values corresponding to the random walk.
+        Shape (count, L).
+    """
     sigma = np.sqrt(d / B)
-    a = np.empty((count, L - 1))
+    beta = np.empty((count, L))
     beta[:, 0] = 0.
-    beta[:, 1:] = sigma * np.random.randn(count, L - 2)
+    beta[:, 1:] = sigma * np.random.randn(count, L - 1)
     theta = np.cumsum(beta, axis=1)
     # Last angle might be non-zero now, so we fix that with linear scaling.
-    for x in range(1, L - 1):
-        theta[:, x] = theta[:, x] - x * theta[:, -1] / (L - 2)
+    for x in range(1, L):
+        theta[:, x] = theta[:, x] - x * theta[:, -1] / (L - 1)
     return theta
 
 
@@ -72,15 +84,19 @@ def bend_angles(arr, axis=-1, n_axis=-2):
 
 
 def bend_autocorr(arr, axis=None, n_axis=None, method="fft"):
-    """
+    u"""
     Args:
-        arr (ndarray): Dataset with last axis
+        arr (ndarray): Array containing raw angles. Last axis ↔ φ, θ, ψ.
         axis (int): Should be the last axis of arr. This kwargs is required
                     by xarray's reduce operation (the dim kwarg for reduce
                     gets mapped to axis). It corresponds to the three angles.
         n_axis (int): Should be the second last axis of arr. This corresponds
                       to rod number.
         method (str): One of "fft" or "brute force".
+
+    Returns:
+        An array for bend autocorrelation. The shape is the same as the input
+        array with the last dimension removed.
     """
     shape = np.shape(arr)
     if axis == len(shape) - 1 and n_axis == axis - 1:
