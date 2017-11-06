@@ -474,7 +474,6 @@ def run_bend_autocorr_rw(count=100, d=5, B=40, L=128):
     phi = np.zeros((count, L))
     psi = np.zeros((count, L))
     total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
-    print(np.shape(total))
     ac = utils.bend_autocorr(total, axis=2, n_axis=1)
     ac = np.array([[ac]])
     # Create fake information for dataset, so that
@@ -502,7 +501,6 @@ def run_bend_autocorr_rw(count=100, d=5, B=40, L=128):
 
 
 def draw_bend_autocorr_rw(dataset):
-    # shape = np.shape(autocorr.values)
     count = dataset["tsteps"].size
     tmp = 100
     display_counts = []
@@ -541,7 +539,7 @@ def naive_autocorr(x, P, strand_len, L):
     ))
 
 
-def draw_binned_bend_autocorr(dataset, sim_curve=None):
+def draw_binned_bend_autocorr(dataset, rw_dataset=None):
     """Draws the bending autocorrelation averaged over time bins."""
     # NOTE: There is a factor of 2 when only θ is changing and other two angles
     # are fixed.
@@ -562,8 +560,8 @@ def draw_binned_bend_autocorr(dataset, sim_curve=None):
     tmp['s'] = pd.Series(tmp['n'] * dataset.attrs["rodLength"], index=tmp.index)
     g = sns.FacetGrid(tmp, col='tsteps_bins', row='run', margin_titles=True)
     g = g.map(plt.plot, 's', 'bend_autocorr')
-    if sim_curve is not None:
-        y2 = (sim_curve["bend_autocorr"]
+    if rw_dataset is not None:
+        y2 = (rw_dataset["bend_autocorr"]
               .isel(run=0, kickSize=0, tsteps=slice(1000))
               .mean(dim='tsteps'))
         for ax in np.reshape(g.axes, (-1,)):
@@ -576,9 +574,9 @@ def draw_binned_bend_autocorr(dataset, sim_curve=None):
     return tmp
 
 
-def draw_bend_autocorr(dataset, energy=False):
+def draw_bend_autocorr(dataset, energy=False, rw_dataset=None):
     fig, axes = plt.subplots(
-        nrows=2 if energy else 1, ncols = len(dataset["run"]),
+        nrows=2 if energy else 1, ncols = min(5, len(dataset["run"])),
         sharey='row', squeeze=False)
     # NOTE: There is a factor of 2 when only θ is changing and other two angles
     # are fixed.
@@ -586,17 +584,27 @@ def draw_bend_autocorr(dataset, energy=False):
     L = dataset.attrs["rodCount"]
     x = dataset.attrs["rodLength"] * np.arange(L)
     y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
+    if rw_dataset is not None:
+        y2 = (rw_dataset["bend_autocorr"]
+              .isel(run=0, kickSize=0, tsteps=slice(1000))
+              .mean(dim='tsteps'))
+    sampling_start = 500
+    sampling_step = 100
     for (i, ax) in enumerate(axes[0]):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]
-                   .sel(run=i, kickSize=ks, tsteps=slice(500, None)))
+                   .sel(run=i, kickSize=ks, tsteps=slice(sampling_start, None, sampling_step)))
             tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
-                        capsize=2.0, label=str(ks.values))
-            ax.set_yscale('log')
-        ax.plot(x, y, label="Naive")
+                        capsize=2.0, label="MC, ks={0}".format(ks.values), color='blue')
+            # ax.set_yscale('log')
+        if rw_dataset is not None:
+            ax.plot(x, y2, color='red', label="1k RW")
+        else:
+            ax.plot(x, y, color='green', label="Naive")
+        ax.set_ylim(0, 1)
         ax.set_title("Run# = {0}".format(i))
-        ax.legend(loc="lower right")
+        ax.legend(loc="upper right")
     axes[0][0].set_ylabel("log(Tangent vector autocorrelation)")
     axes[0][len(axes[0])//2].set_xlabel("Length (nm)")
     if energy:
@@ -607,8 +615,10 @@ def draw_bend_autocorr(dataset, energy=False):
         axes[1][0].set_ylabel("Energy autocorrelation")
         axes[1][len(axes[1])//2].set_xlabel("Time")
     fig.suptitle(
-        "#rods={1}, Correlation function averaged over t=500 to t={0}".format(
-            int(dataset["tsteps"][-1]), dataset.attrs["rodCount"]))
+        "#rods={1}, Correlation function averaged over t={2} to t={0} in steps of {3}".format(
+            int(dataset["tsteps"][-1]), dataset.attrs["rodCount"], sampling_start,
+            sampling_step
+        ))
     plt.show(block=False)
     return (fig, axes)
 
