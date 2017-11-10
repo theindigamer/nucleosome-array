@@ -88,7 +88,7 @@ class strand:
         """ Updates r vector to remove local stretch """
         if tangent is None: tangent=self.tangent()
         t = normalize( tangent, self.d )
-        self.r[:, :3] = np.cumsum( t, axis=0 )
+        self.r[1:, :3] = np.cumsum( t, axis=0 )[:-1]
 
 def parameters( strandClass, eta=9.22E-4 , kT=4.09E-21 ):
     """ Returns cR and cPsi parameters. (See notes) """
@@ -97,8 +97,8 @@ def parameters( strandClass, eta=9.22E-4 , kT=4.09E-21 ):
 
     return kT / ( strandClass.d * zeta ), kT / ( strandClass.d * lamb )
 
-def rDot( r, time, strandClass, tangent=None, jacobian=None, torques=None,
-            params=None, force=4.8E8, inextensible=True, flattened=True ):
+def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
+          jacobian=None, torques=None, params=None, flattened=True ):
     """ Returns dr / dt
         Shape: (L-1, 4)
         Evolves [r_1, ..., r_L-1] components of r. r_0 is immobile.
@@ -128,9 +128,7 @@ def rDot( r, time, strandClass, tangent=None, jacobian=None, torques=None,
     drdt = np.zeros(( strandClass.L, 4 ))
     for i in range(3):
         drdt[1:,i] -= cR * ( x[1:,i] - x[:-1,i] )
-#    drdt[-1, 2] += cR * force
     drdt[-1,:3] += cR * force * tangent[-1] / strandClass.d
-    #tangent[-1] / np.sqrt(tangent[-1,0]**2+tangent[-1,1]**2+tangent[-1,2]**2)
 
     if inextensible:
         tDot = np.zeros(( strandClass.L, 3 ))
@@ -289,7 +287,8 @@ class angular( object ):
                         c = -( self.C + 2.0*self.B ) / ( 2.0*self.d )
                     else:
                         c = -self.C / ( 2.0*self.d )
-                    tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
+                    # tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
+                    tau[0, i] += c * ( RLp1[1,j,k] + kronDelta(j, k) ) * DRs[0,j,k,i]
                     tau[1:,i] += c * ( RLp1[2:,j,k] + RLp1[:-2,j,k] ) * DRs[1:,j,k,i]
         return np.roll( tau, 1, axis=1 )
 
@@ -305,3 +304,9 @@ class angular( object ):
         a = np.swapaxes( RLp1[:-1], 1, 2 )
         b = RLp1[1:]
         return a @ b
+
+def kronDelta(index1, index2):
+    if index1 == index2:
+        return 1
+    else:
+        return 0
