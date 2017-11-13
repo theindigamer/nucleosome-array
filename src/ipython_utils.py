@@ -1,7 +1,12 @@
 import dnaMC
 import utils
 
+
+font = {'family' : 'DejaVu Sans',
+        'size'   : 14}
 import matplotlib.pyplot as plt
+plt.rc('font', **font)
+
 import seaborn as sns
 import numpy as np
 from numpy import log10, sqrt
@@ -10,6 +15,7 @@ import scipy
 from scipy.optimize import curve_fit
 import xarray as xr
 
+from collections import OrderedDict
 import joblib
 import json
 import pickle
@@ -62,9 +68,9 @@ def save_data(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def run_sim(parallel, runs, f, *args, **kwargs):
+def run_sim(parallel, runs, f, *args, n_jobs=4, **kwargs):
     if parallel:
-        tmp = joblib.Parallel(n_jobs=runs)(joblib.delayed(f)(*args, **kwargs)
+        tmp = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(f)(*args, **kwargs)
                                            for _ in range(runs))
     else:
         tmp = [f(*args, **kwargs) for _ in range(runs)]
@@ -82,7 +88,6 @@ def run_sim(parallel, runs, f, *args, **kwargs):
     else:
         return results
 
-
 def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
                 T=dnaMC.Environment.ROOM_TEMP, force=0.,
                 kickSizes=[[0., 0.1, 0.], [0., 0.3, 0.], [0., 0.5, 0.]],
@@ -94,6 +99,8 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
         result = dna.relaxationProtocol(
             force=force, mcSteps=mcSteps, nsamples=nsamples)
         results.append(result)
+    # TODO: Fix concat_datasets so this 'hack' of considering only the θ
+    # kickSize is not required.
     results = utils.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["kickSize"], [np.array(kickSizes)[:, 1]])
@@ -124,7 +131,7 @@ def simulate_dna(runs=5, **kwargs):
         A list of DNA strands in the final state, and the combined results of
         the multiple simulations in one dataset.
     """
-    return run_sim(runs, simulate_dna1, **kwargs)
+    return run_sim(True, runs, simulate_dna1, **kwargs)
 
 
 def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
@@ -219,7 +226,7 @@ def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
 
 
 def simulate_diffusion(*args, runs=5, **kwargs):
-    return run_sim(runs, simulate_diffusion1, *args, **kwargs)
+    return run_sim(True, runs, simulate_diffusion1, *args, **kwargs)
 
 
 def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
@@ -264,9 +271,21 @@ def marko_siggia_curve(B, strandLength):
     return (xs, f(xs))
 
 
+def _compute_extension_helper(
+        dnaClass=None, L=None, kickSize=None, B=None, T=None, force=None,
+        pre_steps=None, extra_steps=None, nsamples=None, **opt_kwargs):
+    dna = dnaClass(
+        L=L, kickSize=kickSize, B=B, T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
+    _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
+    ds = dna.relaxationProtocol(
+        force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
+    ds["tsteps"] += pre_steps
+    return (dna, ds)
+
+
 def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
-                       disordered=True, demo=False, Pinv=1/150):
-    """Compute force vs extension and optionally acceptance vs force.
+                       disordered=False, demo=False, Pinv=1/150):
+    """Run a DNA simulation with different external forces.
 
     ``forces`` is some nonempty iterable with the desired force values to use.
     Similarly for ``kickSizes``. If ``kickSizes`` contains more than one
@@ -277,7 +296,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     worrying about the actual physical values.
     """
     L = 128
-    B = 35.0
+    B = 40.0
     kickSizes_arr = np.array(kickSizes)
     forces_arr = np.array(forces)
 
@@ -286,9 +305,10 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         extra_steps = 10
         nsamples = 2
     else:
-        pre_steps = 1000
-        extra_steps = 1000
-        nsamples = 100
+        pre_steps = int(1E4)
+        extra_steps = int(9E4)
+        nsamples = 900
+
     if disordered:
         dnaClass = dnaMC.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
@@ -300,34 +320,48 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     dnas = []
     datasets = []
     i = 0
-    tot = kickSizes_arr.size * forces_arr.size
+    tot = len(kickSizes_arr) * forces_arr.size
     print(' {0} out of {1}'.format(i, tot), end='', flush=True)
-    for (kickSize, force) in itertools.product(kickSizes_arr, forces_arr):
+
+    def inner(kickSize, force):
         dna = dnaClass(L=L, kickSize=kickSize, B=B,
                        T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
         _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
-        datasets.append(dna.relaxationProtocol(force=force, mcSteps=extra_steps,
-                                               nsamples=nsamples))
-        datasets[-1]["tsteps"] += pre_steps
-        dnas.append(dna)
+        ds = dna.relaxationProtocol(
+            force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
+        ds["tsteps"] += pre_steps
+        return (dna, ds)
+
+    for (ks, f) in itertools.product(kickSizes_arr, forces_arr):
+        a, b = inner(ks, f)
+        dnas.append(a)
+        datasets.append(b)
         i += 1
         print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
-    print("")
+    # tmp = joblib.Parallel(n_jobs=4)(
+    #     joblib.delayed(_compute_extension_helper)(
+    #         L=L, kickSize=ks, B=B, T=dnaMC.Environment.ROOM_TEMP, force=f,
+    #         pre_steps=pre_steps, extra_steps=extra_steps, nsamples=nsamples,
+    #         dnaClass=dnaClass)
+    #         # **opt_kwargs)
+    #     for (ks, f) in itertools.product(kickSizes_arr, forces_arr))
+    # dnas, datasets = list(zip(*tmp))
 
     results = utils.concat_datasets(
         datasets, ["angles", "extension", "energy", "acceptance", "timing"],
-        ["kickSize", "force"], [kickSizes_arr, forces_arr])
+        ["kickSize", "force"], [kickSizes_arr[:, 1], forces_arr])
     results.attrs.update({
         "pre_steps": pre_steps,
         "extra_steps": extra_steps,
         "nsamples": nsamples,
+        "kickSizes": kickSizes_arr,
     })
 
     return (dnas, results)
 
 
 def compute_extension(runs=5, **kwargs):
-    return run_sim(runs, compute_extension1, **kwargs)
+    return run_sim(True, runs, compute_extension1, **kwargs)
 
 
 def draw_force_extension(dataset, acceptance=True):
@@ -340,7 +374,6 @@ def draw_force_extension(dataset, acceptance=True):
     Pinv = dataset.data_vars["Pinv"].values
     pre_steps = dataset.attrs["pre_steps"]
     extra_steps = dataset.attrs["extra_steps"]
-    nsamples = dataset.attrs["nsamples"]
 
     fig, axes = plt.subplots(
         nrows=(2 if acceptance else 1), ncols=kickSizes.size,
@@ -386,7 +419,7 @@ def draw_force_extension(dataset, acceptance=True):
          "Thermalization steps = {1}, extra steps = {2}, "
          "#samples in extra steps = {3}, runs = {4}").format(
              1/Pinv if Pinv != 0 else np.inf, pre_steps,
-             extra_steps, nsamples, runs, B, L, T),
+             extra_steps, dataset.coords["tsteps"].size, runs, B, L, T),
         fontdict = {"fontsize": 10})
     plt.legend(loc="upper right")
     plt.show(block=False)
@@ -469,13 +502,16 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
     plt.show(block=False)
 
 
-def run_bend_autocorr_rw(count=100, d=5, B=40, L=128):
-    theta = utils.generate_rw_2d(d, B, count, L)
-    phi = np.zeros((count, L))
-    psi = np.zeros((count, L))
-    total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
+def run_bend_autocorr_rw(count=1000, d=5, B=40, L=128, phi=None, C=None):
+    if phi is None:
+        # C is ignored, we work in 2D
+        theta = utils.generate_rw_2d(d, B, count, L)
+        phi = np.zeros((count, L))
+        psi = np.zeros((count, L))
+        total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
+    else:
+        total = utils.generate_rw_3d(d, B, count, L, C=C, final_psi=0.)
     ac = utils.bend_autocorr(total, axis=2, n_axis=1)
-    ac = np.array([[ac]])
     # Create fake information for dataset, so that
     # 1. we can reuse the drawing functions which work for simulations directly
     # 2. we can reuse parts of those drawing functions if we want slightly
@@ -483,44 +519,64 @@ def run_bend_autocorr_rw(count=100, d=5, B=40, L=128):
     run = np.array([0])
     kickSize = np.array([np.NaN])
     tsteps = np.arange(count)
+    euler = xr.DataArray(
+        np.array([[total]]),
+        coords=(run, kickSize, tsteps, np.arange(L), ANGLES_STR),
+        dims=("run", "kickSize", "tsteps", "n", "angle_str"),
+        name="euler"
+    )
     ac = xr.DataArray(
-        ac,
+        np.array([[ac]]),
         coords=(run, kickSize, tsteps, np.arange(L)),
         dims=("run", "kickSize", "tsteps", "n"),
         name="bend_autocorr"
     )
     ac = ac.to_dataset()
-    ac.attrs = {
+    data = xr.merge([ac, euler])
+    data.attrs = {
         "rodLength": d,
         "rodCount": L,
         "B": B,
         "strandLength": d * L,
         "remark": "Random Walk",
     }
-    return ac
+    return data
 
 
-def draw_bend_autocorr_rw(dataset):
+def naive_curve(dataset, dims):
+    def naive_autocorr(x, L_p, strand_len, L):
+        return np.concatenate((
+            np.exp(-x[:L//2 + 1]/L_p),
+            np.exp(-(strand_len-x[L//2 + 1:])/L_p)
+        ))
+    def persistence_length(dataset):
+        if dims == 2:
+            return 2 * dataset.attrs["B"]
+        elif dims == 3:
+            return dataset.attrs["B"]
+        else:
+            raise ValueError("dims should be either 2 or 3.")
+    L_p = persistence_length(dataset)
+    L = dataset.attrs["rodCount"]
+    x = dataset.attrs["rodLength"] * np.arange(L)
+    y = naive_autocorr(x, L_p, dataset.attrs["strandLength"], L)
+    return (x, y)
+
+def draw_bend_autocorr_rw(dataset, dims=2):
     count = dataset["tsteps"].size
     tmp = 100
     display_counts = []
     while tmp <= count:
         display_counts.append(tmp)
-        tmp = int(tmp * np.sqrt(10))
-    L = dataset.attrs["rodCount"]
-    x = dataset.attrs["rodLength"] * np.arange(L)
-    # NOTE: There is a factor of 2 when only θ is changing and other two angles
-    # are fixed.
-    expected_p = 2 * dataset.attrs["B"]
-    L = dataset.attrs["rodCount"]
-    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
+        tmp = int(tmp * np.sqrt(10000))
+    x, y = naive_curve(dataset, dims)
     fig, axes = plt.subplots(
         ncols = len(display_counts), sharey='row', squeeze=False)
     for ax, count in zip(axes[0], display_counts):
         tmp = (dataset["bend_autocorr"]
                .isel(run=0, kickSize=0, tsteps=slice(count)))
         tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
-        ax.errorbar(x, tmp_mean.values, #yerr=tmp_std.values,
+        ax.errorbar(x, tmp_mean.values, yerr=tmp_std.values,
                     capsize=2.0, label="RW", color="red"
         )
         ax.plot(x, y, label="Naive", color="green")
@@ -532,27 +588,16 @@ def draw_bend_autocorr_rw(dataset):
     plt.show(block=False)
     return (fig, axes)
 
-def naive_autocorr(x, P, strand_len, L):
-    return np.concatenate((
-        np.exp(-x[:L//2 + 1]/P),
-        np.exp(-(strand_len-x[L//2 + 1:])/P)
-    ))
-
-
-def draw_binned_bend_autocorr(dataset, rw_dataset=None):
+def draw_binned_bend_autocorr(dataset, rw_dataset=None, dims=2):
     """Draws the bending autocorrelation averaged over time bins."""
-    # NOTE: There is a factor of 2 when only θ is changing and other two angles
-    # are fixed.
-    expected_p = 2 * dataset.attrs["B"]
-    L = dataset.attrs["rodCount"]
-    x = dataset.attrs["rodLength"] * np.arange(L)
-    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
+    x, y = naive_curve(dataset, dims)
     t = dataset['tsteps']
     start = 0
-    step = t[-1] // 5
+    nbins = 5
+    step = t[-1] // nbins
     stop = t[-1] + step
     tmp = (dataset["bend_autocorr"]
-           .isel(kickSize=0, run=slice(min(5, dataset["run"][-1])))
+           .isel(kickSize=0, run=slice(min(6, dataset["run"][-1].values)))
            .groupby_bins('tsteps', np.arange(start, stop, step))
            .mean(dim='tsteps')
            .to_dataframe())
@@ -574,38 +619,49 @@ def draw_binned_bend_autocorr(dataset, rw_dataset=None):
     return tmp
 
 
-def draw_bend_autocorr(dataset, energy=False, rw_dataset=None):
+def draw_bend_autocorr(dataset, energy=False, rw_dataset=None, dims=2):
     fig, axes = plt.subplots(
         nrows=2 if energy else 1, ncols = min(5, len(dataset["run"])),
         sharey='row', squeeze=False)
-    # NOTE: There is a factor of 2 when only θ is changing and other two angles
-    # are fixed.
-    expected_p = 2 * dataset.attrs["B"]
-    L = dataset.attrs["rodCount"]
-    x = dataset.attrs["rodLength"] * np.arange(L)
-    y = naive_autocorr(x, expected_p, dataset.attrs["strandLength"], L)
+    x, y = naive_curve(dataset, dims)
     if rw_dataset is not None:
+        total_num_rw = rw_dataset["tsteps"].size
+        x2 = rw_dataset.attrs["rodLength"] * np.arange(rw_dataset.attrs["rodCount"])
         y2 = (rw_dataset["bend_autocorr"]
-              .isel(run=0, kickSize=0, tsteps=slice(1000))
+              .isel(run=0, kickSize=0)
               .mean(dim='tsteps'))
-    sampling_start = 500
-    sampling_step = 100
+        test_num_rw = 25
+        def partial_rw_y(start):
+            return (rw_dataset["bend_autocorr"]
+                    .isel(run=0, kickSize=0, tsteps=slice(start, start + test_num_rw))
+                    .mean(dim='tsteps'))
+        ys = [partial_rw_y(yi) for yi in [0, 50, 100, 250, 500, 750]]
+    start = max(500, int(dataset["tsteps"][0]))
+    step = int(dataset["tsteps"][1] - dataset["tsteps"][0])
+    stop = int(dataset["tsteps"][-1] + step)
     for (i, ax) in enumerate(axes[0]):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]
-                   .sel(run=i, kickSize=ks, tsteps=slice(sampling_start, None, sampling_step)))
+                   .sel(run=i, kickSize=ks, tsteps=np.arange(start, stop, step)))
             tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
                         capsize=2.0, label="MC, ks={0}".format(ks.values), color='blue')
             # ax.set_yscale('log')
         if rw_dataset is not None:
-            ax.plot(x, y2, color='red', label="1k RW")
+            ax.plot(x2, y2, color='red', label="{0} RW".format(total_num_rw))
+            for yi in ys:
+                ax.plot(x2, yi, color='grey', label="{0} RW".format(test_num_rw))
+            ax.plot(x, y, color='green', label="Naive")
         else:
             ax.plot(x, y, color='green', label="Naive")
         ax.set_ylim(0, 1)
         ax.set_title("Run# = {0}".format(i))
-        ax.legend(loc="upper right")
-    axes[0][0].set_ylabel("log(Tangent vector autocorrelation)")
+
+    handles, labels = axes[0][-1].get_legend_handles_labels()
+    by_label = OrderedDict(zip(labels, handles))
+    axes[0][-1].legend(by_label.values(), by_label.keys(), loc="upper right")
+
+    axes[0][0].set_ylabel("(Tangent vector autocorrelation)")
     axes[0][len(axes[0])//2].set_xlabel("Length (nm)")
     if energy:
         for (i, ax) in enumerate(axes[1]):
@@ -616,9 +672,7 @@ def draw_bend_autocorr(dataset, energy=False, rw_dataset=None):
         axes[1][len(axes[1])//2].set_xlabel("Time")
     fig.suptitle(
         "#rods={1}, Correlation function averaged over t={2} to t={0} in steps of {3}".format(
-            int(dataset["tsteps"][-1]), dataset.attrs["rodCount"], sampling_start,
-            sampling_step
-        ))
+            int(dataset["tsteps"][-1]), dataset.attrs["rodCount"], start, step))
     plt.show(block=False)
     return (fig, axes)
 

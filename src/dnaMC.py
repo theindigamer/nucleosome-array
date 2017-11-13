@@ -46,7 +46,7 @@ class Simulation:
 class Evolution:
     """Records simulation parameters and the evolution of a DNA strand."""
 
-    def __init__(self, dna, nsteps, twists=None, initial=False):
+    def __init__(self, dna, nsteps, force, twists=None, initial=False):
         """Initialize an evolution object.
 
         ``twists`` is either a nonempty ``numpy`` array (twisting) or ``None``
@@ -79,7 +79,7 @@ class Evolution:
             "acceptance": np.empty((tsteps.size, 3)),
         })
         if initial:
-            (self.save_energy(dna.totalEnergy())
+            (self.save_energy(dna.totalEnergy(force))
              .save_extension(dna.totalExtension())
              .save_acceptance(np.array([0.5, 0.5, 0.5]))
              .save_angles(dna))
@@ -379,7 +379,7 @@ class NakedDNA:
         return E0
 
     def totalExtension(self):
-        """Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
+        u"""Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
         return self.d * np.sum(self.tVector(), axis=0)
 
     def mcRelaxation(self, force, E0, mcSteps, record_final_only=True):
@@ -419,7 +419,7 @@ class NakedDNA:
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
         tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
-        evol = Evolution(self, nsteps, twists=tmp_twists, initial=includeStart)
+        evol = Evolution(self, nsteps, force, twists=tmp_twists, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
         E0 = self.totalEnergyDensity(force)
         for x in tmp_twists:
@@ -446,7 +446,7 @@ class NakedDNA:
         start = time.clock()
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
-        evol = Evolution(self, nsteps, initial=includeStart)
+        evol = Evolution(self, nsteps, force, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
         E0 = self.totalEnergyDensity(force)
         for nstep in nsteps:
@@ -627,7 +627,7 @@ class NucleosomeArray(NakedDNA):
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
         dummyRodAngles = []
-        evol = Evolution(self, nsteps, initial=includeStart)
+        evol = Evolution(self, nsteps, force, initial=includeStart)
         if includeStart and includeDummyRods:
             dummyRodAngles.append(self.anglesForDummyRods())
         E0 = self.totalEnergyDensity(force)

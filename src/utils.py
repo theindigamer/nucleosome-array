@@ -8,7 +8,15 @@ from copy import copy
 # Data manipulation #
 #-------------------#
 
-def generate_rw_2d(d, B, count, L):
+def _scale(arr, last=0.):
+    """Linearly rescale data to give a fixed value for the last element."""
+    a = arr.copy()
+    L = np.shape(arr)[-1]
+    for x in range(1, L):
+        a[..., x] = a[..., x] - x * a[..., -1] / (L - 1) + last / (L - 1)
+    return a
+
+def generate_rw_2d(d, B, count, L, last=0.):
     """Generates random walks in 2D with the right boundary conditions.
 
     Args:
@@ -27,10 +35,35 @@ def generate_rw_2d(d, B, count, L):
     beta[:, 1:] = sigma * np.random.randn(count, L - 1)
     theta = np.cumsum(beta, axis=1)
     # Last angle might be non-zero now, so we fix that with linear scaling.
-    for x in range(1, L):
-        theta[:, x] = theta[:, x] - x * theta[:, -1] / (L - 1)
-    return theta
+    return _scale(theta, last=last)
 
+def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
+    """Generates random walks in 3D with the right boundary conditions.
+
+    Args:
+        d (float): length of 1 rod in nm
+        B (float): usual bending constant in nm kT
+        count (int): number of random walks to generate
+        L (int): number of rods
+        C (float): usual twisting constant in nm kT
+        final_psi (float): optionally specify value of psi at the end
+
+    Returns:
+        [φ, θ, ψ] values corresponding to the random walk as an array of shape
+        (count, L, 3). If C is not supplied, psi values are zeroed out.
+        If final_psi and C are both supplied, the last value of psi is fixed
+        to the final_psi value. This can be useful if you want to emulate
+        twisting.
+    """
+    theta = generate_rw_2d(d, B, count, L)
+    if C is None:
+        psi = np.zeros((count, L))
+    else:
+        psi = generate_rw_2d(
+            d, C, count, L , last=(0. if final_psi is None else final_psi))
+    # the value of phi doesn't affect the energy
+    phi = 2. * np.pi * np.random.rand(count, L)
+    return np.moveaxis(np.array([phi, theta, psi]), 0, 2)
 
 def autocorr_fft(arr):
     L = arr.shape[-2]
@@ -66,21 +99,33 @@ def autocorr_brute_force(arr):
 
 def bend_angles(arr, axis=-1, n_axis=-2):
     u"""
-    Computes successive bends using the formula β_i = θ_{i+1} - θ_i.
-    So this function works correctly only if the other angles are fixed to zero.
+    Computes successive bends using the formula β_i = θ_{i+1} - θ_i if the
+    other angles are set to zero, otherwise computes dot products of
+    consecutive tangent vectors and takes an inverse cosine.
+
+    In the first case, the result is signed, whereas in the second case it
+    is always positive.
     """
     if (arr[..., 0] == 0.).all() and (arr[..., 2] == 0.).all():
         shape = np.shape(arr)
         if axis == len(shape) - 1 and n_axis == axis - 1:
-            arr2 = np.empty(shape[:-1])
-            arr2[..., -1] = 0.
-            arr2[..., :-1] = arr[..., 1:, 1] - arr[..., :-1, 1]
-            return arr2
+            beta = np.empty(shape[:-1])
+            beta[..., -1] = 0.
+            beta[..., :-1] = arr[..., 1:, 1] - arr[..., :-1, 1]
+            return beta
         else:
             raise ValueError("Code assumes that last axis is 'angle_str' and the"
                              " penultimate axis is 'n'.")
     else:
-        raise ValueError(u"Code assumes that angles other than θ are all zero.")
+        lengths = arr.shape[:-2]
+        tangents = np.empty_like(arr)
+        for inds in np.ndindex(lengths):
+            tangents[inds] = tangent_vector(arr[inds])
+        beta = np.empty(arr.shape[:-1])
+        beta[..., -1] = 0.
+        beta[..., :-1] = np.arccos(
+            np.sum(tangents[..., 1:, :] * tangents[..., :-1, :], axis=-1))
+        return beta
 
 
 def bend_autocorr(arr, axis=None, n_axis=None, method="fft"):
@@ -190,17 +235,13 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
 
     def f(datasets, new_dims, new_coords):
         if len(new_dims) == 1:
-            nonlocal common_data_vars
             data_vars = {k: datasets[0].data_vars[k] for k in common_data_vars}
             coords = copy(datasets[0].coords)
             coords.update({new_dims[0]: new_coords[0]})
-            nonlocal common_attrs
             attrs = {k: datasets[0].attrs[k] for k in common_attrs}
-            nonlocal concat_data_vars
             for k in concat_data_vars:
                 data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_dims[0])
                 data_vars.update({k: data_array})
-            nonlocal concat_attrs
             for k in concat_attrs:
                 attr = np.concatenate([ds.attrs[k] for ds in datasets])
                 attrs.update({k: attr})
@@ -379,11 +420,11 @@ def twist_steps(default_step_size, twists):
         else:
             return np.array(twists, dtype=float)
 
-_r_0 = 4.18 # in nm, for central line of DNA wrapped around nucleosome
-_z_0 = 2.39 # pitch of superhelix in nm
+_r_0 = 4.18    # in nm, for central line of DNA wrapped around nucleosome
+_z_0 = 2.39    # pitch of superhelix in nm
 _n_wrap = 1.65 # number of times DNA winds around nucleosome
-_zeta_max = 2.*np.pi*_n_wrap
-_helix_entry_tilt = np.arctan2(-2.*np.pi*_r_0, _z_0)
+_zeta_max = 2. * np.pi * _n_wrap
+_helix_entry_tilt = np.arctan2(-2. * np.pi * _r_0, _z_0)
 # called lambda in the notes
 
 def normalize(v):
