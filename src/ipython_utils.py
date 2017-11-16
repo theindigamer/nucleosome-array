@@ -52,7 +52,7 @@ def _toListlike(results):
 def total_time(result):
     return result["timing"][..., result["timing_keys"] == "Total time"]
 
-# TODO: fix this function to work with datasets
+# FIXME: Make this function work with datasets.
 def save_data(results, fname):
     tmp = _toListlike(results)
     if fname.endswith(".pckl"):
@@ -68,12 +68,27 @@ def save_data(results, fname):
 # Key simulation functions #
 #--------------------------#
 
-def run_sim(parallel, runs, f, *args, n_jobs=4, **kwargs):
+# This definition cannot be moved inside run_sim as joblib stops working due
+# to some pickling issue.
+# FIXME: seed doesn't work as expected; results are not reproducible.
+def _wrapper(seed, f, *args, **kwargs):
+    np.random.seed(seed)
+    return f(*args, **kwargs)
+
+def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
+
+    # 1E8 is arbitrary, just use some big number
+    _seed = np.random.randint(1E8) if seed is None else seed
+    np.random.seed(_seed)
+
     if parallel:
-        tmp = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(f)(*args, **kwargs)
-                                           for _ in range(runs))
+        _seeds = np.random.randint(1E8, size=runs)
+        tmp = joblib.Parallel(n_jobs=n_jobs)(
+            joblib.delayed(_wrapper)(_seeds[i], f, *args, **kwargs)
+            for i in range(runs))
     else:
         tmp = [f(*args, **kwargs) for _ in range(runs)]
+
     if isinstance(tmp[0], tuple):
         flag = True
         dnas, results = list(zip(*tmp))
@@ -83,6 +98,9 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, **kwargs):
     results = utils.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["run"], [np.arange(runs)])
+
+    results.attrs.update({"seed": _seed})
+
     if flag:
         return dnas, results
     else:
@@ -125,7 +143,7 @@ def simulate_dna(runs=5, **kwargs):
 
     Args:
         runs (int): Number of runs for the simulation.
-        kwargs: See simulate_dna1.
+        kwargs: See run_sim and simulate_dna1.
 
     Returns:
         A list of DNA strands in the final state, and the combined results of
@@ -360,8 +378,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     return (dnas, results)
 
 
-def compute_extension(runs=5, **kwargs):
-    return run_sim(True, runs, compute_extension1, **kwargs)
+def compute_extension(runs=5, parallel=True, **kwargs):
+    return run_sim(parallel, runs, compute_extension1, **kwargs)
 
 
 def draw_force_extension(dataset, acceptance=True):
@@ -597,7 +615,7 @@ def draw_binned_bend_autocorr(dataset, rw_dataset=None, dims=2):
     step = t[-1] // nbins
     stop = t[-1] + step
     tmp = (dataset["bend_autocorr"]
-           .isel(kickSize=0, run=slice(min(6, dataset["run"][-1].values)))
+           .isel(kickSize=0, run=slice(min(6, dataset["run"].size)))
            .groupby_bins('tsteps', np.arange(start, stop, step))
            .mean(dim='tsteps')
            .to_dataframe())
@@ -619,6 +637,9 @@ def draw_binned_bend_autocorr(dataset, rw_dataset=None, dims=2):
     return tmp
 
 
+# TODO: Emit warning if dataset with nonzero force is supplied. Currently,
+# the function will just crash if multiple values of force are present.
+# TODO: Refactor common parts from the three autocorrelation drawing functions.
 def draw_bend_autocorr(dataset, energy=False, rw_dataset=None, dims=2):
     fig, axes = plt.subplots(
         nrows=2 if energy else 1, ncols = min(5, len(dataset["run"])),

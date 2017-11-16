@@ -302,29 +302,16 @@ class NakedDNA:
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
-    def metropolis_update_slow(self, force, E0, acceptance=False):
+    def metropolis_update_seq(self, force, E0, acceptance=False):
         """ Updates dnaClass Euler angles using Metropolis algorithm.
-        This will do updates one at a time instead of multiple ones together.
-        Returns the total energy density.
-        Temperature T is in Kelvin.
-        """
-        sigma = self.sim.kickSize
-        timers = self.sim.timers
 
-        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
-        moves[np.abs(moves) >= 5.0*sigma] = 0.
-        if acceptance:
-            accepted_frac = np.zeros(3)
-        random_rod = np.random.randint(1, high=self.L - 1, size=self.L - 2)
+        The iteration order is φ_even, φ_odd, θ_even, θ_odd, ψ_even, ψ_odd.
 
-        # for move in moves:
+        Returns:
+            If acceptance is true, a tuple with the energy density and the acceptance
+            ratios. Otherwise, it return the energy density.
 
-    def metropolis_update(self, force, E0, acceptance=False):
-        """ Updates dnaClass Euler angles using Metropolis algorithm.
-        This is done in two sweeps, first the even-numbered ones and then the
-        odd-numbered ones.
-        Returns the total energy density.
-        Temperature T is in Kelvin.
+            The energy density is of shape (L,).
         """
         sigma = self.sim.kickSize
         timers = self.sim.timers
@@ -374,6 +361,58 @@ class NakedDNA:
             if acceptance:
                 accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
 
+        if acceptance:
+            return E0, accepted_frac
+        return E0
+
+    def metropolis_update(self, force, E0, acceptance=False):
+        """ Updates dnaClass Euler angles using Metropolis algorithm.
+
+        In contrast to metropolis_update_seq, the iteration order is random,
+        i.e. we randomly pick one of even/odd and one of φ/θ/ψ and give kicks to
+        the corresponding angles.
+
+        Returns:
+            If acceptance is true, a tuple with the energy density and the acceptance
+            ratios. Otherwise, it return the energy density.
+
+            The energy density is of shape (L,).
+
+            WARNING: Currently the acceptance values returned are incorrect.
+        """
+        sigma = self.sim.kickSize
+        timers = self.sim.timers
+
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves[np.abs(moves) >= 5.0 * sigma] = 0.
+        if acceptance:
+            accepted_frac = np.zeros(3)
+
+        # TODO: fix acceptance computation
+        def update_rods(i, even=True):
+            mask = self.oddMask if even else self.evenMask
+            nonlocal E0
+            self.euler[1:-1, i] += moves[:, i] * mask
+            Ef = self.totalEnergyDensity(force)
+            deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
+
+            reject = 1.0 * mask
+            if self.env.T <= Environment.MIN_TEMP:
+                reject[deltaE <= 0.] = 0.
+            else:
+                utils.metropolis(reject, deltaE, even=(not even))
+            self.euler[1:-1, i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity(force)
+            if acceptance:
+                accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
+
+        # We have duplication to mimic the time scale in metropolis_update_seq
+        # instead of having an overall factor of two.
+        for i in np.random.randint(3, size=3):
+            start = time.clock()
+            update_rods(i, even=(np.random.rand() > 0.5))
+            timers[0] += time.clock() - start
+            update_rods(i, even=(np.random.rand() > 0.5))
         if acceptance:
             return E0, accepted_frac
         return E0
@@ -466,7 +505,7 @@ class DisorderedNakedDNA(NakedDNA):
     # [DS, Appendix 1] describes equations related to disorder.
     def __init__(self, Pinv=1./300, **kwargs):
         # The 1/300 value has no particular significance.
-        # [1] considers values from ~1/1000 to ~1/100
+        # [DS] considers values from ~1/1000 to ~1/100
         NakedDNA.__init__(self, **kwargs)
         self.Pinv = Pinv # inverse of P value in 1/nm
         self.Bm = self.B / (1 - self.B * Pinv)
