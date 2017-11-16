@@ -379,8 +379,11 @@ def md_jacobian(tangent):
         J[i, 2, 2] = p / D_sq
         J[i, 2, 3] = 0.
 
-        J[i, 3, 0] = 0.
-        J[i, 3, 1] = 0.
+        # J[i, 3, 0] = 0.
+        # J[i, 3, 1] = 0.
+        # non-zero terms as per [DS, Eq (C6)] but with a - sign
+        J[i, 3, 0] = -t[1] * t[2] / (p_sq * D)
+        J[i, 3, 1] = +t[0] * t[2] / (p_sq * D)
         J[i, 3, 2] = 0.
         J[i, 3, 3] = 0.
     return J

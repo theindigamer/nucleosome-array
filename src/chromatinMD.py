@@ -20,6 +20,7 @@ class strand:
         SL is the strand length.
         psiEnd is the twist at the right edge.
         The principal class attribute is the strand r vector: r = {x,y,z,psi}."""
+    # TODO: What is rd? Hydrodynamic radius?
     def __init__( self, L=128, B=43.E-9, C=89.E-9, SL=740.E-9, rd=1.2E-9, psiEnd=0.0,
                 thetaEnd=0.0, uniformlyTwisted=False ):
         self.L = L
@@ -55,7 +56,7 @@ class strand:
            alpha (rows) is ordered as {delta, phi, theta, psi}.
            r (columns) is ordered as {x,y,z,psi}.
            * We don't have psi depend on r.
-           ** We should check with * numerically.""" 
+           ** We should check with * numerically."""
         if tangent is None: tangent=self.tangent()
         t = tangent
         D = np.sqrt( t[...,0]**2 + t[...,1]**2 + t[...,2]**2 )
@@ -120,14 +121,14 @@ def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
         torques = dnaAngle.effectiveTorques()
     tau = torques
 
-    x = 0.0 * tau
-    for i in range(3):
-        for j in range(3):
-            x[:,i] += J[:, j, i] * tau[:, j]
+    # x = 0.0 * tau
+    # for i in range(3):
+    #     for j in range(3):
+    #        x[:,i] += J[:, j, i] * tau[:, j]
+    x = np.einsum('...ji,...j', J, tau)
 
     drdt = np.zeros(( strandClass.L, 4 ))
-    for i in range(3):
-        drdt[1:,i] -= cR * ( x[1:,i] - x[:-1,i] )
+    drdt[1:,:3] -= cR * ( x[1:,:3] - x[:-1,:3] )
     drdt[-1,:3] += cR * force * tangent[-1] / strandClass.d
 
     if inextensible:
@@ -161,7 +162,7 @@ def makeFilename( directory, elementList, extension, dated=True ):
 def project( vecA, vecB ):
     """ Returns ( vecA . vecB ) vecB.
         Vectors A and B must have shape (N,3)."""
-    AdotB = vecA[:,0]*vecB[:,0] + vecA[:,1]*vecB[:,1] + vecA[:,2]*vecB[:,2]
+    AdotB = np.einsum('...j,...j', vecA, vecB)
     vec = vecB.copy()
     for i in range(3):
         vec[:,i] *= AdotB
@@ -175,8 +176,7 @@ def projectPerp( vecA, vecB ):
 def normalize( vector, N=1.0 ):
     """ Returns vector field with norm N.
         Enter vector of shape (len(vector), 3)."""
-    norm = np.sqrt( vector[:,0]**2 + vector[:,1]**2 + vector[:,2]**2 )
-
+    norm = np.linalg.norm(vector, axis=1)
     x = N * vector
     for i in range(3):
         x[:,i] /= norm
@@ -192,7 +192,6 @@ class angular( object ):
         self.d = strandClass.d
         self.euler = self.alpha( strandClass, tangent )[...,1:]
         self.RL = self.edgeRotationMatrix( strandClass )
-#self.edgeRotationMatrix( strandCLass )
 
     def alpha( self, strandClass, tangent=None ):
         """ alpha = {Delta, phi, theta, psi}."""
@@ -201,14 +200,14 @@ class angular( object ):
         else:
             t = tangent
 
-        tabs = np.sqrt( t[:,0]**2 + t[:,1]**2 + t[:,2]**2 )
+        t_norm = np.linalg.norm(t, axis=1)
         r = strandClass.r
 
         x = 0.0 * r
-        x[...,0] = tabs
-        x[...,1] = np.arctan( t[:,0] / ( t[:,1] + 1.E-12 ) )
-        x[...,2] = np.arccos( t[:,2] / tabs )
-        x[...,3] = r[...,3]
+        x[:, 0] = t_norm
+        x[:, 1] = np.arctan2(t[:, 0], t[:, 1])
+        x[:, 2] = np.arccos(t[:, 2] / t_norm)
+        x[:, 3] = r[:, 3]
 
         return x
 
@@ -269,7 +268,9 @@ class angular( object ):
         return utils.md_derivative_rotation_matrices(self.euler)
 
     def effectiveTorques( self, Rs=None, DRs=None ):
-        """ Returns the effective torques per temperature."""
+        """ Returns the effective torques per temperature. Shape (L, 4)."""
+        # Rotation matrices for the start of the L rods plus 1 at the end
+        # describing the tunable boundary condition.
         RLp1 = np.zeros(( self.L+1, 3, 3))
         if Rs is None:
             RLp1[:-1,...] = self.rotationMatrices()
@@ -279,6 +280,8 @@ class angular( object ):
 
         if DRs is None: DRs = self.derivativeRotationMatrices()
 
+        def kronDelta(i1, i2): return (1 if i1 == i2 else 0)
+
         tau = np.zeros(( self.L, 4))
         for i in range(3):
             for j in range(3):
@@ -287,13 +290,14 @@ class angular( object ):
                         c = -( self.C + 2.0*self.B ) / ( 2.0*self.d )
                     else:
                         c = -self.C / ( 2.0*self.d )
-                    # tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
                     tau[0, i] += c * ( RLp1[1,j,k] + kronDelta(j, k) ) * DRs[0,j,k,i]
                     tau[1:,i] += c * ( RLp1[2:,j,k] + RLp1[:-2,j,k] ) * DRs[1:,j,k,i]
         return np.roll( tau, 1, axis=1 )
 
     def deltaMatrices( self, Rs=None ):
         """ Returns delta matrices. """
+        # TODO: Why is the first dimension L + 1 instead of L?
+        # There are L rods, so there should be L - 1 delta matrices, not L.
         RLp1 = np.zeros(( self.L+1, 3, 3))
         if Rs is None:
             RLp1[:-1,...] = self.rotationMatrices()
@@ -304,9 +308,3 @@ class angular( object ):
         a = np.swapaxes( RLp1[:-1], 1, 2 )
         b = RLp1[1:]
         return a @ b
-
-def kronDelta(index1, index2):
-    if index1 == index2:
-        return 1
-    else:
-        return 0
