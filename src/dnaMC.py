@@ -46,7 +46,7 @@ class Simulation:
 class Evolution:
     """Records simulation parameters and the evolution of a DNA strand."""
 
-    def __init__(self, dna, nsteps, twists=None, initial=False):
+    def __init__(self, dna, nsteps, force, twists=None, initial=False):
         """Initialize an evolution object.
 
         ``twists`` is either a nonempty ``numpy`` array (twisting) or ``None``
@@ -79,7 +79,7 @@ class Evolution:
             "acceptance": np.empty((tsteps.size, 3)),
         })
         if initial:
-            (self.save_energy(dna.totalEnergy())
+            (self.save_energy(dna.totalEnergy(force))
              .save_extension(dna.totalExtension())
              .save_acceptance(np.array([0.5, 0.5, 0.5]))
              .save_angles(dna))
@@ -302,16 +302,22 @@ class NakedDNA:
             t = self.tVector()
         return np.cumsum( t, axis=0 )
 
-    def metropolisUpdate(self, force, E0, acceptance=False):
+    def metropolis_update_seq(self, force, E0, acceptance=False):
         """ Updates dnaClass Euler angles using Metropolis algorithm.
-        Returns the total energy density.
-        Temperature T is in Kelvin.
+
+        The iteration order is φ_even, φ_odd, θ_even, θ_odd, ψ_even, ψ_odd.
+
+        Returns:
+            If acceptance is true, a tuple with the energy density and the acceptance
+            ratios. Otherwise, it return the energy density.
+
+            The energy density is of shape (L,).
         """
         sigma = self.sim.kickSize
         timers = self.sim.timers
 
         moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
-        moves[np.abs(moves) >= 5.0*sigma] = 0
+        moves[np.abs(moves) >= 5.0*sigma] = 0.
         if acceptance:
             accepted_frac = np.zeros(3)
 
@@ -359,16 +365,68 @@ class NakedDNA:
             return E0, accepted_frac
         return E0
 
+    def metropolis_update(self, force, E0, acceptance=False):
+        """ Updates dnaClass Euler angles using Metropolis algorithm.
+
+        In contrast to metropolis_update_seq, the iteration order is random,
+        i.e. we randomly pick one of even/odd and one of φ/θ/ψ and give kicks to
+        the corresponding angles.
+
+        Returns:
+            If acceptance is true, a tuple with the energy density and the acceptance
+            ratios. Otherwise, it return the energy density.
+
+            The energy density is of shape (L,).
+
+            WARNING: Currently the acceptance values returned are incorrect.
+        """
+        sigma = self.sim.kickSize
+        timers = self.sim.timers
+
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves[np.abs(moves) >= 5.0 * sigma] = 0.
+        if acceptance:
+            accepted_frac = np.zeros(3)
+
+        # TODO: fix acceptance computation
+        def update_rods(i, even=True):
+            mask = self.oddMask if even else self.evenMask
+            nonlocal E0
+            self.euler[1:-1, i] += moves[:, i] * mask
+            Ef = self.totalEnergyDensity(force)
+            deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
+
+            reject = 1.0 * mask
+            if self.env.T <= Environment.MIN_TEMP:
+                reject[deltaE <= 0.] = 0.
+            else:
+                utils.metropolis(reject, deltaE, even=(not even))
+            self.euler[1:-1, i] -= moves[:, i] * reject
+            E0 = self.totalEnergyDensity(force)
+            if acceptance:
+                accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
+
+        # We have duplication to mimic the time scale in metropolis_update_seq
+        # instead of having an overall factor of two.
+        for i in np.random.randint(3, size=3):
+            start = time.clock()
+            update_rods(i, even=(np.random.rand() > 0.5))
+            timers[0] += time.clock() - start
+            update_rods(i, even=(np.random.rand() > 0.5))
+        if acceptance:
+            return E0, accepted_frac
+        return E0
+
     def totalExtension(self):
-        """Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
+        u"""Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
         return self.d * np.sum(self.tVector(), axis=0)
 
     def mcRelaxation(self, force, E0, mcSteps, record_final_only=True):
         """Monte Carlo relaxation using Metropolis algorithm."""
         if record_final_only:
             for _ in range(mcSteps - 1):
-                E0 = self.metropolisUpdate(force, E0, acceptance=False)
-            E0, acc = self.metropolisUpdate(force, E0, acceptance=True)
+                E0 = self.metropolis_update(force, E0, acceptance=False)
+            E0, acc = self.metropolis_update(force, E0, acceptance=True)
             return E0, self.totalExtension(), acc
         else:
             energies = np.empty((mcSteps, self.L))
@@ -376,7 +434,7 @@ class NakedDNA:
             acceptance_ratios = np.empty((mcSteps, 3))
             for i in range(mcSteps):
                 E0, acceptance_ratios[i] = (
-                    self.metropolisUpdate(force, E0, acceptance=True)
+                    self.metropolis_update(force, E0, acceptance=True)
                 )
                 energies[i] = E0
                 extensions[i] = self.totalExtension()
@@ -400,7 +458,7 @@ class NakedDNA:
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
         tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
-        evol = Evolution(self, nsteps, twists=tmp_twists, initial=includeStart)
+        evol = Evolution(self, nsteps, force, twists=tmp_twists, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
         E0 = self.totalEnergyDensity(force)
         for x in tmp_twists:
@@ -427,7 +485,7 @@ class NakedDNA:
         start = time.clock()
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
-        evol = Evolution(self, nsteps, initial=includeStart)
+        evol = Evolution(self, nsteps, force, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
         E0 = self.totalEnergyDensity(force)
         for nstep in nsteps:
@@ -447,7 +505,7 @@ class DisorderedNakedDNA(NakedDNA):
     # [DS, Appendix 1] describes equations related to disorder.
     def __init__(self, Pinv=1./300, **kwargs):
         # The 1/300 value has no particular significance.
-        # [1] considers values from ~1/1000 to ~1/100
+        # [DS] considers values from ~1/1000 to ~1/100
         NakedDNA.__init__(self, **kwargs)
         self.Pinv = Pinv # inverse of P value in 1/nm
         self.Bm = self.B / (1 - self.B * Pinv)
@@ -608,7 +666,7 @@ class NucleosomeArray(NakedDNA):
         timers = self.sim.timers
         nsteps = utils.partition(nsamples, mcSteps)
         dummyRodAngles = []
-        evol = Evolution(self, nsteps, initial=includeStart)
+        evol = Evolution(self, nsteps, force, initial=includeStart)
         if includeStart and includeDummyRods:
             dummyRodAngles.append(self.anglesForDummyRods())
         E0 = self.totalEnergyDensity(force)

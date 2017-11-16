@@ -17,16 +17,13 @@ def _array(draw, elements=FINITE_FLOATS):
 
 @composite
 def _strand_r(draw):
-    def f(n):
-        return draw(_array(ANGULAR_FLOATS))(n)
-
+    f = draw(_array(ANGULAR_FLOATS))
     def g(n):
         phi, theta, psi = f((3, n))
         z = np.cos(theta)
         x = np.sin(theta) * np.cos(phi)
         y = np.sin(theta) * np.sin(phi)
         return np.append(np.cumsum([x, y, z], axis=1), [psi], axis=0).T
-
     return g
 
 

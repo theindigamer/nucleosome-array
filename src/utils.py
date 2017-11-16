@@ -3,9 +3,179 @@ from numba import jit
 import xarray as xr
 from copy import copy
 
+
 #-------------------#
 # Data manipulation #
 #-------------------#
+
+def _scale(arr, last=0.):
+    """Linearly rescale data to give a fixed value for the last element."""
+    a = arr.copy()
+    L = np.shape(arr)[-1]
+    for x in range(1, L):
+        a[..., x] = a[..., x] - x * a[..., -1] / (L - 1) + last / (L - 1)
+    return a
+
+def generate_rw_2d(d, B, count, L, last=0.):
+    """Generates random walks in 2D with the right boundary conditions.
+
+    Args:
+        d (float): length of 1 rod in nm
+        B (float): usual bending constant in nm kT
+        count (int): number of random walks to generate
+        L (int): number of rods
+
+    Returns:
+        Array of θ values corresponding to the random walk.
+        Shape (count, L).
+    """
+    sigma = np.sqrt(d / B)
+    beta = np.empty((count, L))
+    beta[:, 0] = 0.
+    beta[:, 1:] = sigma * np.random.randn(count, L - 1)
+    theta = np.cumsum(beta, axis=1)
+    # Last angle might be non-zero now, so we fix that with linear scaling.
+    return _scale(theta, last=last)
+
+def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
+    """Generates random walks in 3D with the right boundary conditions.
+
+    Args:
+        d (float): length of 1 rod in nm
+        B (float): usual bending constant in nm kT
+        count (int): number of random walks to generate
+        L (int): number of rods
+        C (float): usual twisting constant in nm kT
+        final_psi (float): optionally specify value of psi at the end
+
+    Returns:
+        [φ, θ, ψ] values corresponding to the random walk as an array of shape
+        (count, L, 3). If C is not supplied, psi values are zeroed out.
+        If final_psi and C are both supplied, the last value of psi is fixed
+        to the final_psi value. This can be useful if you want to emulate
+        twisting.
+    """
+    theta = generate_rw_2d(d, B, count, L)
+    if C is None:
+        psi = np.zeros((count, L))
+    else:
+        psi = generate_rw_2d(
+            d, C, count, L , last=(0. if final_psi is None else final_psi))
+    # the value of phi doesn't affect the energy
+    phi = 2. * np.pi * np.random.rand(count, L)
+    return np.moveaxis(np.array([phi, theta, psi]), 0, 2)
+
+def autocorr_fft(arr):
+    L = arr.shape[-2]
+    lengths = arr.shape[:-2]
+    tangents = np.empty_like(arr)
+    for inds in np.ndindex(lengths):
+        tangents[inds] = tangent_vector(arr[inds])
+    tmpk = np.fft.rfft(tangents, axis=-2)
+    corr = np.fft.irfft(tmpk * tmpk.conj(), axis=-2)
+    # needs additional normalization after summing
+    return np.sum(corr, axis=-1)/L
+
+
+@jit(cache=True, nopython=True)
+def autocorr_brute_force(arr):
+    L = arr.shape[-2]
+    lengths = arr.shape[:-2]
+    tangents = np.empty_like(arr)
+    arr3 = 0. * arr
+    counters = np.zeros(L)
+    for m in range(L):
+        for n in range(m, L):
+            counters[n - m] += 1
+    for inds in np.ndindex(lengths):
+        tangents[inds] = tangent_vector(arr[inds])
+        for m in range(L):
+            for n in range(m, L):
+                arr3[inds][n - m] += tangents[inds][m] * tangents[inds][n]
+        for i in range(3):
+            arr3[inds][:, i] /= counters
+    return np.sum(arr3, axis=-1)
+
+
+def bend_angles(arr, axis=-1, n_axis=-2):
+    u"""
+    Computes successive bends using the formula β_i = θ_{i+1} - θ_i if the
+    other angles are set to zero, otherwise computes dot products of
+    consecutive tangent vectors and takes an inverse cosine.
+
+    In the first case, the result is signed, whereas in the second case it
+    is always positive.
+    """
+    if (arr[..., 0] == 0.).all() and (arr[..., 2] == 0.).all():
+        shape = np.shape(arr)
+        if axis == len(shape) - 1 and n_axis == axis - 1:
+            beta = np.empty(shape[:-1])
+            beta[..., -1] = 0.
+            beta[..., :-1] = arr[..., 1:, 1] - arr[..., :-1, 1]
+            return beta
+        else:
+            raise ValueError("Code assumes that last axis is 'angle_str' and the"
+                             " penultimate axis is 'n'.")
+    else:
+        lengths = arr.shape[:-2]
+        tangents = np.empty_like(arr)
+        for inds in np.ndindex(lengths):
+            tangents[inds] = tangent_vector(arr[inds])
+        beta = np.empty(arr.shape[:-1])
+        beta[..., -1] = 0.
+        beta[..., :-1] = np.arccos(
+            np.sum(tangents[..., 1:, :] * tangents[..., :-1, :], axis=-1))
+        return beta
+
+
+def bend_autocorr(arr, axis=None, n_axis=None, method="fft"):
+    u"""
+    Args:
+        arr (ndarray): Array containing raw angles. Last axis ↔ φ, θ, ψ.
+        axis (int): Should be the last axis of arr. This kwargs is required
+                    by xarray's reduce operation (the dim kwarg for reduce
+                    gets mapped to axis). It corresponds to the three angles.
+        n_axis (int): Should be the second last axis of arr. This corresponds
+                      to rod number.
+        method (str): One of "fft" or "brute force".
+
+    Returns:
+        An array for bend autocorrelation. The shape is the same as the input
+        array with the last dimension removed.
+    """
+    shape = np.shape(arr)
+    if axis == len(shape) - 1 and n_axis == axis - 1:
+        if method == "fft":
+            return autocorr_fft(arr)
+        elif method == "brute force":
+            return autocorr_brute_force(arr)
+        else:
+            raise ValueError("Unrecognized method argument.")
+    else:
+        raise ValueError("Code assumes that last axis is 'angle_str' and the"
+                         " penultimate axis is rod number.")
+
+
+def compute_bend_autocorr(dataset, method="fft"):
+    return (dataset["angles"].copy()
+            .reduce(bend_autocorr, dim="angle_str",
+                    n_axis=dataset["angles"].get_axis_num('n'), method=method)
+            .rename("bend_autocorr"))
+
+
+def add_bend_autocorr(dataset, method="fft"):
+    da = compute_bend_autocorr(dataset, method=method)
+    da2 = (dataset["angles"].copy()
+           .reduce(bend_angles, dim="angle_str",
+                   n_axis=dataset["angles"].get_axis_num('n'))
+           .rename("bend_angle"))
+    ds = xr.merge([dataset, da, da2])
+    # For some reason, the merge function destroys attributes.
+    # See https://github.com/pydata/xarray/issues/1614 and links therein.
+    # So we copy the attributes separately.
+    ds.attrs = dataset.attrs
+    return ds
+
 
 def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
                     concat_attrs=[]):
@@ -45,7 +215,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
                          " number of coordinate lists. This mismatch might have"
                          " happened if you forgot to wrap new_dims or"
                          " new_coords in a list.")
-    lens = tuple(map(len, new_coords))
+    lengths = tuple(map(len, new_coords))
 
     # Some data variables and attributes are shared across datasets, so these
     # will not get a nested structure.
@@ -61,21 +231,17 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
     ds = np.empty(len(datasets), dtype="object")
     for (i, d) in enumerate(datasets):
         ds[i] = d
-    ds = np.reshape(ds, lens)
+    ds = np.reshape(ds, lengths)
 
     def f(datasets, new_dims, new_coords):
         if len(new_dims) == 1:
-            nonlocal common_data_vars
             data_vars = {k: datasets[0].data_vars[k] for k in common_data_vars}
             coords = copy(datasets[0].coords)
             coords.update({new_dims[0]: new_coords[0]})
-            nonlocal common_attrs
             attrs = {k: datasets[0].attrs[k] for k in common_attrs}
-            nonlocal concat_data_vars
             for k in concat_data_vars:
                 data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_dims[0])
                 data_vars.update({k: data_array})
-            nonlocal concat_attrs
             for k in concat_attrs:
                 attr = np.concatenate([ds.attrs[k] for ds in datasets])
                 attrs.update({k: attr})
@@ -121,7 +287,25 @@ def tangent_vector(euler):
 
 @jit(cache=True, nopython=True)
 def metropolis(reject, deltaE, even=True):
-    """Updates reject in-place using the Metropolis algorithm."""
+    """Updates reject in-place using the Metropolis algorithm.
+
+    Args:
+        reject (Array[float; (x,)]):
+            Array to be modified in-place. If even is True, it is assumed that
+            reject has 1.0 at even indices and similarly when even is False.
+        deltaE (Array[float; (x,)]):
+            Local energy changes used to check for rejection. Energy should be
+            in units of kT.
+        even (bool): Indicates if even/odd indices of deltaE should be checked.
+
+    Returns:
+        None
+
+    Note:
+        The x in the sizes indicates that the two array sizes have to be equal.
+        For example, you will have x = L - 2 when the two rods at the end have
+        fixed orientation.
+    """
     for i in range(0 if even else 1, reject.size, 2):
         if deltaE[i] < 0:
             reject[i] = 0.
@@ -139,12 +323,16 @@ def twist_bend_angles(Deltas, squared):
         squared (bool): Returns
 
     Returns:
-        (β^2, β^2, Γ^2) if squared is true.
+        (β², β², Γ²) if squared is true.
         (β₁, β₂, Γ) if squared is false.
         Individual terms are arrays of shape (L-1,).
 
     Note:
         See [DS, Appendix D] for equations.
+
+        The dummy value of β² is present if squared is true because Numba
+        requires the type signatures of possible return values to be the
+        same.
     """
     n = len(Deltas)
     if squared:
@@ -154,8 +342,6 @@ def twist_bend_angles(Deltas, squared):
             beta_sq[i] = 2.0 * (1.0 - Deltas[i, 2, 2])
             Gamma_sq[i] = (1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1]
                            + Deltas[i, 2, 2])
-        # We need to have a dummy value as Numba requires type signatures of
-        # possible return values to be the same.
         return (beta_sq, beta_sq, Gamma_sq)
     else:
         beta_1 = np.empty(n)
@@ -234,11 +420,11 @@ def twist_steps(default_step_size, twists):
         else:
             return np.array(twists, dtype=float)
 
-_r_0 = 4.18 # in nm, for central line of DNA wrapped around nucleosome
-_z_0 = 2.39 # pitch of superhelix in nm
+_r_0 = 4.18    # in nm, for central line of DNA wrapped around nucleosome
+_z_0 = 2.39    # pitch of superhelix in nm
 _n_wrap = 1.65 # number of times DNA winds around nucleosome
-_zeta_max = 2.*np.pi*_n_wrap
-_helix_entry_tilt = np.arctan2(-2.*np.pi*_r_0, _z_0)
+_zeta_max = 2. * np.pi * _n_wrap
+_helix_entry_tilt = np.arctan2(-2. * np.pi * _r_0, _z_0)
 # called lambda in the notes
 
 def normalize(v):
@@ -263,7 +449,7 @@ def axialRotMatrix(theta, axis=2):
     `axis` should be 0 (x), 1 (y) or 2 (z).
     **Warning**: This function does not do input validation.
     """
-    # Using tuples because nested lists don't work with array in Numba 0.35.0
+    # Using tuples because nested lists don't work with np.array in Numba 0.35.0
     if axis == 2:
         rot = np.array((
             ( np.cos(theta), np.sin(theta), 0.),
