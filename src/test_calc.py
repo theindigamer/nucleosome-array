@@ -29,6 +29,15 @@ def _strand_r(draw):
     return g
 
 
+@composite
+def _angular(draw):
+    strand = cmd.strand()
+    strand.r[:] = draw(_strand_r())(strand.L)
+    t = strand.tangent_vectors()
+    ang = cmd.angular(strand, tangent=t)
+    return ang
+
+
 @given(_array())
 def test_eulerMatrix(f):
     """Checks that eulerMatrixOfAngles and anglesOfEulerMatrix are inverses."""
@@ -42,12 +51,8 @@ def test_eulerMatrix(f):
     assert np.allclose(m1, m2, atol=1.E-8)
 
 
-@given(_strand_r())
-def test_derivative_rotation_matrices(f):
-    s = cmd.strand()
-    s.r[:] = f(s.L)
-    t = s.tangent_vectors()
-    ang = cmd.angular(s, tangent=t)
+@given(_angular())
+def test_derivative_rotation_matrices(ang):
     m1 = ang.derivativeRotationMatrices()
     m2 = ang.oldDerivativeRotationMatrices()
     assert np.allclose(m1, m2, atol=1.E-16)
@@ -61,3 +66,10 @@ def test_jacobian(f):
     m1 = s.jacobian(tangent=t)
     m2 = s.oldJacobian(tangent=t)
     assert np.allclose(m1, m2, atol=1.E-12)
+
+
+@given(_angular())
+def test_effective_torques(ang):
+    tau1 = ang.oldEffectiveTorques()
+    tau2 = ang.effectiveTorques()
+    assert np.allclose(tau1, tau2, atol=1.E-16)
