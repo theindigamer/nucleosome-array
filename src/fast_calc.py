@@ -78,7 +78,7 @@ def autocorr_fft(arr):
     lengths = arr.shape[:-2]
     tangents = np.empty_like(arr)
     for inds in np.ndindex(lengths):
-        tangents[inds] = tangent_vector(arr[inds])
+        tangents[inds] = unit_tangent_vectors(arr[inds])
     tmpk = np.fft.rfft(tangents, axis=-2)
     corr = np.fft.irfft(tmpk * tmpk.conj(), axis=-2)
     # needs additional normalization after summing
@@ -96,7 +96,7 @@ def autocorr_brute_force(arr):
         for n in range(m, L):
             counters[n - m] += 1
     for inds in np.ndindex(lengths):
-        tangents[inds] = tangent_vector(arr[inds])
+        tangents[inds] = unit_tangent_vectors(arr[inds])
         for m in range(L):
             for n in range(m, L):
                 arr3[inds][n - m] += tangents[inds][m] * tangents[inds][n]
@@ -128,7 +128,7 @@ def bend_angles(arr, axis=-1, n_axis=-2):
         lengths = arr.shape[:-2]
         tangents = np.empty_like(arr)
         for inds in np.ndindex(lengths):
-            tangents[inds] = tangent_vector(arr[inds])
+            tangents[inds] = unit_tangent_vectors(arr[inds])
         beta = np.empty(arr.shape[:-1])
         beta[..., -1] = 0.
         beta[..., :-1] = np.arccos(

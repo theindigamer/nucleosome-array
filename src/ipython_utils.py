@@ -137,7 +137,7 @@ def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   dnaClass=dnaMC.NakedDNA):
     """Twisting a DNA with one end."""
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
-    result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+    result = dna.torsionProtocol(twists=(step_size * np.arange(1, n + 1, 1)),
                                  mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
@@ -719,6 +719,7 @@ def plot_angles(dna, result, totalOnly=True, show=True):
     if show:
         plt.show()
 
+
 def draw_energy(dataset, axis=None, show=None):
     flag = axis is None
     if flag:
@@ -843,6 +844,7 @@ def draw_diffusion(dataset):
     draw_acceptance(dataset, ax[1][0])
     draw_energy(dataset, ax[1][1])
     draw_energy_autocorr(dataset, ax[1][2])
+
 
 # TODO: fix this function to work with datasets
 def plot_evolution(results, show=True, fits=None):

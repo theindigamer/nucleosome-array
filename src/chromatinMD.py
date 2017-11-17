@@ -94,12 +94,13 @@ class strand:
         t = normalize( tangent, self.d )
         self.r[1:, :3] = np.cumsum( t, axis=0 )[:-1]
 
-def parameters( strandClass, eta=9.22E-4 , kT=4.09E-21 ):
+def parameters( strandClass, eta=9.22E-4 , T=293.15 ):
     """ Returns cR and cPsi parameters. (See notes) """
+    k_B = 1.38E-23
     zeta = 2. * np.pi * eta / np.log( strandClass.B / strandClass.rd )
     lamb = 2. * np.pi * eta * strandClass.rd**2
 
-    return kT / ( strandClass.d * zeta ), kT / ( strandClass.d * lamb )
+    return k_B * T / ( strandClass.d * zeta ), k_B * T / ( strandClass.d * lamb )
 
 def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
           jacobian=None, torques=None, params=None, flattened=True ):
@@ -110,7 +111,7 @@ def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
         [x1, y1, z1, psi1, ..., x_{L-1}, y_{L-1}, z_{L-1}, psi_{L-1}]
         inextensible is true if the strand does not stretch locally."""
     # NOTE: Force used above is actually F / kT, units: Newton / Joule == m^-1.
-    # The value 4.8E8 corresponds to ~2 pN at T = 293 K.
+    # The value 4.8E8 corresponds to 1.96 pN at T = 293 K.
     strandClass.r = r.reshape(( strandClass.L, 4 ))
 
     if params is None: params = parameters( strandClass )
