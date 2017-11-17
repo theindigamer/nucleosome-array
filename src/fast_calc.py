@@ -17,17 +17,16 @@ def _scale(arr, last=0.):
     return a
 
 def generate_rw_2d(d, B, count, L, last=0.):
-    """Generates random walks in 2D with the right boundary conditions.
+    u"""Generates random walks in 2D with the right boundary conditions.
 
     Args:
         d (float): length of 1 rod in nm
-        B (float): usual bending constant in nm kT
+        B (float): usual bending constant in nm·kT
         count (int): number of random walks to generate
         L (int): number of rods
 
     Returns:
-        Array of θ values corresponding to the random walk.
-        Shape (count, L).
+        θ values (Array[(count, L)]) corresponding to the random walk.
     """
     sigma = np.sqrt(d / B)
     beta = np.empty((count, L))
@@ -54,7 +53,16 @@ def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
         If final_psi and C are both supplied, the last value of psi is fixed
         to the final_psi value. This can be useful if you want to emulate
         twisting.
+
+    FIXME:
+        Implementation is wholly incorrect.
     """
+    # We know H(φ, θ, ψ) / kT -> we should use this for sampling instead of
+    # misusing B and C directly. Possible approaches:
+    #   * Metropolis
+    #   * Slice sampling - see Neal Radford, Colin has code.
+    #   * Event Chain Monte Carlo (Krauth et al.) - Colin says it's very fast.
+    #     https://arxiv.org/pdf/0903.2954.pdf
     theta = generate_rw_2d(d, B, count, L)
     if C is None:
         psi = np.zeros((count, L))
@@ -260,7 +268,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
 #------------------------------#
 
 @jit(cache=True, nopython=True)
-def tangent_vector1(euler):
+def unit_tangent_vector1(euler):
     t = np.empty(3)
     phi = euler[0]
     theta = euler[1]
@@ -272,7 +280,7 @@ def tangent_vector1(euler):
 
 
 @jit(cache=True, nopython=True)
-def tangent_vector(euler):
+def unit_tangent_vectors(euler):
     n = len(euler)
     t = np.empty((n, 3))
     for i in range(n):
@@ -290,10 +298,10 @@ def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm.
 
     Args:
-        reject (Array[float; (x,)]):
+        reject (Array[(x,); float]):
             Array to be modified in-place. If even is True, it is assumed that
             reject has 1.0 at even indices and similarly when even is False.
-        deltaE (Array[float; (x,)]):
+        deltaE (Array[(x,)]):
             Local energy changes used to check for rejection. Energy should be
             in units of kT.
         even (bool): Indicates if even/odd indices of deltaE should be checked.
@@ -318,7 +326,7 @@ def twist_bend_angles(Deltas, squared):
     u"""Computes twist and bend values for an array of Delta matrices.
 
     Args:
-        Deltas (Array[float; (L-1, 3, 3)]):
+        Deltas (Array[(L-1, 3, 3)]):
             Matrices describing relative twist between consecutive rods.
         squared (bool): Returns
 
@@ -358,7 +366,7 @@ def rotation_matrices(euler):
     u"""Computes rotation matrices element-wise.
 
     Args:
-        euler (Array[float; (L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+        euler (Array[(L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
 
     Returns:
         Passive rotation matrices in an array of shape (L, 3, 3).

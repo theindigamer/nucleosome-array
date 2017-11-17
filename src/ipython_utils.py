@@ -1,5 +1,5 @@
 import dnaMC
-import utils
+import fast_calc
 
 
 font = {'family' : 'DejaVu Sans',
@@ -75,6 +75,9 @@ def _wrapper(seed, f, *args, **kwargs):
     np.random.seed(seed)
     return f(*args, **kwargs)
 
+# TODO: generalize run_sim to work in parallel with multiple argument sets.
+# For example, if you have runs=1 and forces=[0.1, 0.2], then we should
+# still create 2 jobs and run these two in parallel.
 def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
 
     # 1E8 is arbitrary, just use some big number
@@ -95,7 +98,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
     else:
         flag = False
         results = tmp
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["run"], [np.arange(runs)])
 
@@ -119,7 +122,7 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
         results.append(result)
     # TODO: Fix concat_datasets so this 'hack' of considering only the θ
     # kickSize is not required.
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["kickSize"], [np.array(kickSizes)[:, 1]])
     return results
@@ -272,7 +275,7 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
     for (T, ks) in T_ks:
         _, res = simulate_diffusion(*args, T=T, kickSize=ks, **kwargs)
         results.append(res.copy())
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["temperature", "kickSize"], [Ts, kickSizes])
     return results
@@ -307,7 +310,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     ``forces`` is some nonempty iterable with the desired force values to use.
     Similarly for ``kickSizes``. If ``kickSizes`` contains more than one
-    element, multiple graphs are draw side-by-side.
+    element, multiple graphs are drawn side-by-side.
     ``disordered`` creates "disordered" DNA, i.e., the zeros of bending energy
     are randomly shifted from zero physical bend.
     ``demo`` is provided for quickly debugging the drawing code without
@@ -365,7 +368,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     #     for (ks, f) in itertools.product(kickSizes_arr, forces_arr))
     # dnas, datasets = list(zip(*tmp))
 
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         datasets, ["angles", "extension", "energy", "acceptance", "timing"],
         ["kickSize", "force"], [kickSizes_arr[:, 1], forces_arr])
     results.attrs.update({
@@ -523,13 +526,13 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
 def run_bend_autocorr_rw(count=1000, d=5, B=40, L=128, phi=None, C=None):
     if phi is None:
         # C is ignored, we work in 2D
-        theta = utils.generate_rw_2d(d, B, count, L)
+        theta = fast_calc.generate_rw_2d(d, B, count, L)
         phi = np.zeros((count, L))
         psi = np.zeros((count, L))
         total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
     else:
-        total = utils.generate_rw_3d(d, B, count, L, C=C, final_psi=0.)
-    ac = utils.bend_autocorr(total, axis=2, n_axis=1)
+        total = fast_calc.generate_rw_3d(d, B, count, L, C=C, final_psi=0.)
+    ac = fast_calc.bend_autocorr(total, axis=2, n_axis=1)
     # Create fake information for dataset, so that
     # 1. we can reuse the drawing functions which work for simulations directly
     # 2. we can reuse parts of those drawing functions if we want slightly
