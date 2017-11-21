@@ -73,7 +73,34 @@ class strand:
 
         return J
 
-    def jacobian( self, tangent=None ):
+    def jacobianBV( self, tangent=None ):
+        """Returns the jacobian of the alpha to r transformation.
+           Shape: (L, 4, 4).
+           alpha (rows) is ordered as {delta, phi, theta, psi}.
+           r (columns) is ordered as {x,y,z,psi}.
+           * We don't have psi depend on r.
+           ** We should check with * numerically.""" 
+        if tangent is None: tangent=self.tangent()
+        t = tangent
+        D = np.sqrt( t[...,0]**2 + t[...,1]**2 + t[...,2]**2 )
+        p = np.sqrt( t[...,0]**2 + t[...,1]**2 + 1.E-16 )
+
+        J = np.zeros(( self.L, 4, 4 ))
+        J[..., 0, 0] = -t[:,0] / D
+        J[..., 0, 1] = -t[:,1] / D
+        J[..., 0, 2] = -t[:,2] / D
+        J[..., 1, 0] = -t[:,1] / p**2
+        J[..., 1, 1] = t[:,0] / p**2
+        J[..., 2, 0] = -t[:,0] * t[:,2] / ( p * D**2 )
+        J[..., 2, 1] = -t[:,1] * t[:,2] / ( p * D**2 )
+        J[..., 2, 2] = p / D**2
+        J[..., 3, 0] = -t[:,1] * t[:,2] / ( p**2 * D )
+        J[..., 3, 1] = t[:,0] * t[:,2] / ( p**2 * D )
+        J[..., 3, 2] = 0.0
+
+        return J
+
+    def fastJacobian( self, tangent=None ):
         """Returns the jacobian of the alpha to r transformation.
            Shape: (L, 4, 4).
            alpha (rows) is ordered as {delta, phi, theta, psi}.
@@ -83,6 +110,8 @@ class strand:
         if tangent is None:
             tangent = self.tangent()
         return utils.md_jacobian(tangent)
+
+    jacobian = fastJacobian
 
     def removeLocalStretch( self, tangent=None ):
         """ Updates r vector to remove local stretch """
@@ -121,8 +150,8 @@ def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
     tau = torques
 
     x = 0.0 * tau
-    for i in range(3):
-        for j in range(3):
+    for i in range(4):
+        for j in range(4):
             x[:,i] += J[:, j, i] * tau[:, j]
 
     drdt = np.zeros(( strandClass.L, 4 ))
@@ -268,15 +297,11 @@ class angular( object ):
         """ Returns rotation matrices along the DNA string"""
         return utils.md_derivative_rotation_matrices(self.euler)
 
-    def effectiveTorques( self, Rs=None, DRs=None ):
+    def testEffectiveTorquesAV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""
-        RLp1 = np.zeros(( self.L+1, 3, 3))
         if Rs is None:
-            RLp1[:-1,...] = self.rotationMatrices()
-        else:
-            RLp1[:-1,...] = Rs
-        RLp1[-1,...] = self.RL
-
+            Rs = self.rotationMatrices()
+ 
         if DRs is None: DRs = self.derivativeRotationMatrices()
 
         tau = np.zeros(( self.L, 4))
@@ -285,12 +310,15 @@ class angular( object ):
                 for k in range(3):
                     if k==2:
                         c = -( self.C + 2.0*self.B ) / ( 2.0*self.d )
-                    else:
-                        c = -self.C / ( 2.0*self.d )
-                    # tau[0,i] += c * ( RLp1[1,j,k] + np.kron(j,k) ) * DRs[0,j,k,i]
-                    tau[0, i] += c * ( RLp1[1,j,k] + kronDelta(j, k) ) * DRs[0,j,k,i]
-                    tau[1:,i] += c * ( RLp1[2:,j,k] + RLp1[:-2,j,k] ) * DRs[1:,j,k,i]
-        return np.roll( tau, 1, axis=1 )
+                    else: 
+                       c = -self.C / ( 2.0*self.d )
+
+                    tau[0, i] += c * ( self.RL[j,k] + Rs[1,j,k] ) * DRs[0,j,k,i]
+                    tau[-1,i] += c * ( Rs[-2,j,k] + self.RL[j,k] ) * DRs[-1,j,k,i]
+                    tau[1:-1,i] += c * ( Rs[:-2,j,k] + Rs[2:,j,k] ) * DRs[1:-1,j,k,i]
+        return np.roll( tau, 1, axis=1 ) #THis rolling here is ugly. I should fix this sometime.
+
+    effectiveTorques = testEffectiveTorquesAV
 
     def deltaMatrices( self, Rs=None ):
         """ Returns delta matrices. """
