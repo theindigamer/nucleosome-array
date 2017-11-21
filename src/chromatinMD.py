@@ -305,6 +305,87 @@ class angular( object ):
         b = RLp1[1:]
         return a @ b
 
+    def twistBendAngles( self, Ds=None, squared=True ):
+        """ Returns the twist and bending angles."""
+        if Ds==None:
+            Ds = self.deltaMatrices()
+        if squared:
+            betaSq = 2.0 * ( 1 - Ds[...,2,2] )
+            GammaSq = 1.0 - Ds[...,0,0] - Ds[...,1,1] + Ds[...,2,2]
+            return betaSq, GammaSq
+        else:
+            beta1 = ( Ds[...,1,2] - Ds[...,2,1] ) / 2.0
+            beta2 = ( Ds[...,2,0] - Ds[...,0,2] ) / 2.0
+            Gamma = ( Ds[...,0,1] - Ds[...,1,0] ) / 2.0
+            return beta1, beta2, Gamma
+
+    def bendingEnergyDensity( self, angles=None, squared=True ):
+        """ Returns the bending energy density.
+            Enter angles in a tuple( arrays ) format."""
+        if angles==None:
+            angles = self.twistBendAngles( squared=squared )
+
+        if squared:
+            return self.B * angles[0] / (2.*self.d)
+        else:
+            return self.B * ( angles[0]**2 + angles[1]**2 ) / (2.*self.d)
+
+    def bendingEnergy( self, squared=True, bendEnergyDensity=None ):
+        """ Returns the total bending energy."""
+        if bendEnergyDensity==None:
+            bendEnergyDensity = self.bendingEnergyDensity( squared=squared )
+
+        return np.sum( bendEnergyDensity )
+
+    def twistEnergyDensity( self, angles=None, squared=True ):
+        """ Returns the twist energy density."""
+        if angles==None:
+            angles = self.twistBendAngles( squared=squared )
+        if squared:
+            return self.C * angles[-1] / (2.*self.d)
+        else:
+            return self.C * angles[-1]**2 / (2.*self.d)
+
+    def twistEnergy( self, squared=True, twistEnergyDensity=None ):
+        """ Returns the total twist energy. """
+        if twistEnergyDensity==None:
+            twistEnergyDensity = self.twistEnergyDensity( squared=squared )
+
+        return np.sum( twistEnergyDensity )
+
+    def stretchEnergyDensity( self, strandClass, tangent=None, force=1.96 ):
+        """ Returns the stretching energy density.
+            Enter the force in pN
+            Our energy is in unit of kT.
+            Es = force * tangent * prefactor
+            prefactor = 10E-12 10-9/ (1.38E-23 296.65).
+            Change prefactor to change the temperature."""
+        prefactor = 0.24
+        if tangent==None:
+            tangent = strandClass.tangent()
+        t = tangent / self.d
+        tEndt = t[:, 0] * t[-1, 0] + t[:, 1] * t[-1, 1] + t[:, 2] * t[-1, 2] 
+        return -force * prefactor * ( tEndt - np.ones((self.L)) )
+
+    def stretchEnergy( self, strandClass, force=1.96, stretchEnergyDensity=None ):
+        """ Returns the total stretching energy. """
+        if stretchEnergyDensity==None:
+            stretchEnergyDensity = self.stretchEnergyDensity( strandClass, force=force )
+        return np.sum( stretchEnergyDensity )
+
+    def totalEnergyDensity( self, strandClass, squared=True, force=1.96 ):
+        """ Returns the total energy density."""
+        E = self.bendingEnergyDensity( squared=squared )
+        E += self.twistEnergyDensity( squared=squared ) 
+        E += self.stretchEnergyDensity( strandClass, force=force )
+        return E 
+
+    def totalEnergy( self, strandClass, squared=True, force=1.96, totalEnergyDensity=None ):
+        """ Returns the total energy. """
+        if totalEnergyDensity==None:
+            totalEnergyDensity=self.totalEnergyDensity( strandClass, squared=squared, force=force )
+        return np.sum( totalEnergyDensity )
+
 def kronDelta(index1, index2):
     if index1 == index2:
         return 1
