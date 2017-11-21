@@ -1,6 +1,6 @@
 import dnaMC
 import fast_calc
-
+import gen_utils as gu
 
 font = {'family' : 'DejaVu Sans',
         'size'   : 14}
@@ -29,13 +29,6 @@ import pprint
 #------------------#
 
 ANGLES_STR = ["φ", "θ", "ψ"]
-
-def mean_std(x, **kwargs):
-    return (x.mean(**kwargs), x.std(**kwargs))
-
-def _norm(da, dim='axis'):
-    """Computes the Euclidean norm of a DataArray along a dimension."""
-    return ((da**2).sum(dim=dim))**0.5
 
 #-------------------#
 # Utility functions #
@@ -137,8 +130,9 @@ def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   dnaClass=dnaMC.NakedDNA):
     """Twisting a DNA with one end."""
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
-    result = dna.torsionProtocol(twists=(step_size * np.arange(1, n + 1, 1)),
-                                 mcSteps=mcSteps, nsamples=nsamples)
+    twists = step_size * np.arange(1, n + 1, 1)
+    result = dna.torsionProtocol(
+        twists=twists, mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def simulate_dna(runs=5, **kwargs):
@@ -405,14 +399,14 @@ def draw_force_extension(dataset, acceptance=True):
     for (j, ks) in enumerate(kickSizes):
         # 'axis' dimension is the last dimension
         # there doesn't seem to be a simple way to broadcast np.linalg.norm
-        tmp = _norm(dataset["extension"].sel(kickSize=ks), dim='axis')
-        mean, stdev = mean_std(tmp.groupby("force"))
+        tmp = gu.norm(dataset["extension"].sel(kickSize=ks), dim='axis')
+        mean, stdev = gu.mean_std(tmp.groupby("force"))
         print(mean.values)
         print(forces)
         axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
                             capsize=4.0, linestyle='')
         axes[0, j].plot(ms_curve_x, ms_curve_y)
-        axes[0, j].set_xlim(right=740)
+        axes[0, j].set_xlim(left=500, right=740)
         axes[0, j].set_ylim(bottom=-0.5, top=10+0.5)
         axes[0, j].set_title("kick size = {0}".format(ks))
         axes[0, j].set_xlabel("")
@@ -426,7 +420,7 @@ def draw_force_extension(dataset, acceptance=True):
         for (j, ks) in enumerate(kickSizes):
             tmp = dataset["acceptance"].sel(kickSize=ks)
             for (j_a, angle) in enumerate(ANGLES_STR):
-                mean, stdev = mean_std(tmp.isel(angle_str=j_a).groupby("force"))
+                mean, stdev = gu.mean_std(tmp.isel(angle_str=j_a).groupby("force"))
                 axes[1, j].errorbar(forces, mean.values, yerr=stdev.values,
                                     label=angle)
                 axes[1, j].set_ylim(bottom=0, top=1)
@@ -596,7 +590,7 @@ def draw_bend_autocorr_rw(dataset, dims=2):
     for ax, count in zip(axes[0], display_counts):
         tmp = (dataset["bend_autocorr"]
                .isel(run=0, kickSize=0, tsteps=slice(count)))
-        tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+        tmp_mean, tmp_std = gu.mean_std(tmp, dim='tsteps')
         ax.errorbar(x, tmp_mean.values, yerr=tmp_std.values,
                     capsize=2.0, label="RW", color="red"
         )
@@ -667,7 +661,7 @@ def draw_bend_autocorr(dataset, energy=False, rw_dataset=None, dims=2):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]
                    .sel(run=i, kickSize=ks, tsteps=np.arange(start, stop, step)))
-            tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+            tmp_mean, tmp_std = gu.mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
                         capsize=2.0, label="MC, ks={0}".format(ks.values), color='blue')
             # ax.set_yscale('log')
@@ -727,7 +721,7 @@ def draw_energy(dataset, axis=None, show=None):
     # else:
     #     new_axis = axis
     tsteps = dataset["tsteps"]
-    mean, stdev = mean_std(dataset["energy"].sel(tsteps=tsteps), dim=['run'])
+    mean, stdev = gu.mean_std(dataset["energy"].sel(tsteps=tsteps), dim=['run'])
     if len(np.shape(mean)) != 1:
         print("WARNING: draw_energy encountered unexpected dimensions"
               " after averaging over runs.")
@@ -763,7 +757,7 @@ def draw_angle_profile(dataset, axis=None, total_only=False, show=None):
     else:
         raise ValueError("show should be one of None, int (> 0) or the string 'all'.")
 
-    mean, stdev = mean_std(dataset["angles"].sel(tsteps=tsteps)/(2*np.pi), dim=['run'])
+    mean, stdev = gu.mean_std(dataset["angles"].sel(tsteps=tsteps)/(2*np.pi), dim=['run'])
     if len(np.shape(mean)) != 3: # one for time, one for rods, one for 3 angles
         print("WARNING: draw_angle_profile encountered unexpected dimensions"
               " after averaging over runs.")
@@ -801,7 +795,7 @@ def draw_energy_autocorr(dataset, axis=None):
     corr_ds = xr.DataArray(en_corr, coords=dataset["energy"].coords,
                            attrs=dataset["energy"].attrs)
     # TODO: StackOverflow - ? easier way to cast fft over dataset.
-    mean, stdev = mean_std(corr_ds, dim=['run'])
+    mean, stdev = gu.mean_std(corr_ds, dim=['run'])
     # TODO: add fitting+plotting code to determine+display correlation time
     if len(np.shape(mean)) != 1:
         print("WARNING: draw_energy encountered unexpected dimensions"
@@ -821,8 +815,8 @@ def draw_acceptance(dataset, axis=None):
     else:
         new_axis = axis
     for (i, a) in enumerate(ANGLES_STR):
-        mean, stdev = mean_std(dataset["acceptance"].isel(angle_str=i),
-                               dim=["run"])
+        mean, stdev = gu.mean_std(
+            dataset["acceptance"].isel(angle_str=i), dim=["run"])
         new_axis.errorbar(
             dataset["tsteps"].values, mean.values, yerr=stdev.values, label=a)
     new_axis.legend(loc="upper right")
