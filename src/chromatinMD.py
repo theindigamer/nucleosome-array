@@ -3,6 +3,8 @@ import scipy as sp
 from scipy.integrate import odeint
 import matplotlib
 import matplotlib.pylab as plt
+import matplotlib.animation as animation
+from mpl_toolkits.mplot3d import Axes3D
 import pickle
 import os
 import copy
@@ -112,6 +114,8 @@ class strand:
         return utils.md_jacobian(tangent)
 
     jacobian = fastJacobian
+#    jacobian = oldJacobian
+#    jacobian = jacobianBV
 
     def removeLocalStretch( self, tangent=None ):
         """ Updates r vector to remove local stretch """
@@ -220,8 +224,8 @@ class angular( object ):
         self.C = strandClass.C
         self.d = strandClass.d
         self.euler = self.alpha( strandClass, tangent )[...,1:]
-        self.RL = self.edgeRotationMatrix( strandClass )
-#self.edgeRotationMatrix( strandCLass )
+        self.RStart = self.startRotationMatrix( strandClass )
+        self.REnd = self.endRotationMatrix( strandClass )
 
     def alpha( self, strandClass, tangent=None ):
         """ alpha = {Delta, phi, theta, psi}."""
@@ -241,7 +245,21 @@ class angular( object ):
 
         return x
 
-    def edgeRotationMatrix( self, strandClass ):
+    def startRotationMatrix( self, strandClass ):
+        """ """
+        theta = strandClass.thetaEnd
+        R = np.zeros(( 3, 3 ))
+        R[0, 0] = 1.0
+        R[0, 1] = 0.0
+        R[1, 0] = 0.0
+        R[1, 1] = np.cos(theta)
+        R[1, 2] = np.sin(theta)
+        R[2, 0] = 0.0
+        R[2, 1] = -np.sin(theta)
+        R[2, 2] = np.cos(theta)
+        return R
+
+    def endRotationMatrix( self, strandClass ):
         """ """
         theta = strandClass.thetaEnd
         psi = strandClass.psiEnd
@@ -297,7 +315,7 @@ class angular( object ):
         """ Returns rotation matrices along the DNA string"""
         return utils.md_derivative_rotation_matrices(self.euler)
 
-    def testEffectiveTorquesAV( self, Rs=None, DRs=None ):
+    def effectiveTorquesAV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""
         if Rs is None:
             Rs = self.rotationMatrices()
@@ -313,12 +331,12 @@ class angular( object ):
                     else: 
                        c = -self.C / ( 2.0*self.d )
 
-                    tau[0, i] += c * ( self.RL[j,k] + Rs[1,j,k] ) * DRs[0,j,k,i]
-                    tau[-1,i] += c * ( Rs[-2,j,k] + self.RL[j,k] ) * DRs[-1,j,k,i]
+                    tau[0, i] += c * ( self.RStart[j,k] + Rs[1,j,k] ) * DRs[0,j,k,i]
+                    tau[-1,i] += c * ( Rs[-2,j,k] + self.REnd[j,k] ) * DRs[-1,j,k,i]
                     tau[1:-1,i] += c * ( Rs[:-2,j,k] + Rs[2:,j,k] ) * DRs[1:-1,j,k,i]
         return np.roll( tau, 1, axis=1 ) #THis rolling here is ugly. I should fix this sometime.
 
-    effectiveTorques = testEffectiveTorquesAV
+    effectiveTorques = effectiveTorquesAV
 
     def deltaMatrices( self, Rs=None ):
         """ Returns delta matrices. """
@@ -327,7 +345,7 @@ class angular( object ):
             RLp1[:-1,...] = self.rotationMatrices()
         else:
             RLp1[:-1,...] = Rs
-        RLp1[-1,...] = self.RL
+        RLp1[-1,...] = self.REnd
 
         a = np.swapaxes( RLp1[:-1], 1, 2 )
         b = RLp1[1:]
