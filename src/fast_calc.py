@@ -298,9 +298,9 @@ def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm.
 
     Args:
-        reject (Array[(x,); float]):
+        reject (Array[(x,); bool]):
             Array to be modified in-place. If even is True, it is assumed that
-            reject has 1.0 at even indices and similarly when even is False.
+            reject has True at even indices and similarly when even is False.
         deltaE (Array[(x,)]):
             Local energy changes used to check for rejection. Energy should be
             in units of kT.
@@ -311,14 +311,14 @@ def metropolis(reject, deltaE, even=True):
 
     Note:
         The x in the sizes indicates that the two array sizes have to be equal.
-        For example, you will have x = L - 2 when the two rods at the end have
+        For example, you will have x = L - 1 when the two rods at the end have
         fixed orientation.
     """
     for i in range(0 if even else 1, reject.size, 2):
         if deltaE[i] < 0:
-            reject[i] = 0.
+            reject[i] = False
         elif deltaE[i] < 16 and np.exp(-deltaE[i]) > np.random.rand():
-            reject[i] = 0.
+            reject[i] = False
 
 
 @jit(cache=True, nopython=True)
@@ -326,14 +326,14 @@ def twist_bend_angles(Deltas, squared):
     u"""Computes twist and bend values for an array of Delta matrices.
 
     Args:
-        Deltas (Array[(L-1, 3, 3)]):
+        Deltas (Array[(L, 3, 3)]):
             Matrices describing relative twist between consecutive rods.
         squared (bool): Returns
 
     Returns:
         (β², β², Γ²) if squared is true.
         (β₁, β₂, Γ) if squared is false.
-        Individual terms are arrays of shape (L-1,).
+        Individual terms are arrays of shape (L,).
 
     Note:
         See [DS, Appendix D] for equations.
@@ -361,43 +361,50 @@ def twist_bend_angles(Deltas, squared):
             Gamma[i]  = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
         return (beta_1, beta_2, Gamma)
 
+
 @jit(cache=True, nopython=True)
-def rotation_matrices(euler):
+def set_rotation_matrix(angles, res):
+    phi = angles[0]
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    theta = angles[1]
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    psi = angles[2]
+    cos_psi = np.cos(psi)
+    sin_psi = np.sin(psi)
+
+    res[0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
+    res[0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
+    res[0, 2] = sin_theta * sin_phi
+
+    res[1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
+    res[1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
+    res[1, 2] = cos_phi * sin_theta
+
+    res[2, 0] = sin_theta * sin_psi
+    res[2, 1] = -cos_psi * sin_theta
+    res[2, 2] = cos_theta
+
+@jit(cache=True, nopython=True)
+def rotation_matrices(euler, end):
     u"""Computes rotation matrices element-wise.
 
     Args:
         euler (Array[(L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+        end (Array[(3,)]): Euler angles for last point, ordered [φ, θ, ψ].
 
     Returns:
-        Passive rotation matrices in an array of shape (L, 3, 3).
+        Passive rotation matrices in an array of shape (L+1, 3, 3).
 
     Note:
         Represents [DS, Eqn. (B1, B2)].
     """
     n = len(euler)
-    R = np.empty((n, 3, 3))
+    R = np.empty((n + 1, 3, 3))
     for i in range(n):
-        phi = euler[i, 0]
-        cos_phi = np.cos(phi)
-        sin_phi = np.sin(phi)
-        theta = euler[i, 1]
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        psi = euler[i, 2]
-        cos_psi = np.cos(psi)
-        sin_psi = np.sin(psi)
-
-        R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
-        R[i, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
-        R[i, 0, 2] = sin_theta * sin_phi
-
-        R[i, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
-        R[i, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
-        R[i, 1, 2] = cos_phi * sin_theta
-
-        R[i, 2, 0] = sin_theta * sin_psi
-        R[i, 2, 1] = -cos_psi * sin_theta
-        R[i, 2, 2] = cos_theta
+        set_rotation_matrix(euler[i], R[i])
+    set_rotation_matrix(end, R[n])
     return R
 
 def partition(n_parts, total):

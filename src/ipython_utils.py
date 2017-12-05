@@ -110,7 +110,7 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
     for ks in kickSizes:
         dna = dnaMC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
                              strand_len=rod_len * L, B=B)
-        result = dna.relaxationProtocol(
+        result = dna.relaxation_protocol(
             force=force, mcSteps=mcSteps, nsamples=nsamples)
         results.append(result)
     # TODO: Fix concat_datasets so this 'hack' of considering only the θ
@@ -131,7 +131,7 @@ def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
     """Twisting a DNA with one end."""
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
     twists = step_size * np.arange(1, n + 1, 1)
-    result = dna.torsionProtocol(
+    result = dna.torsion_protocol(
         twists=twists, mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
@@ -160,7 +160,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
 
     dna = dnaClass(L=L)
-    res = dna.torsionProtocol(
+    res = dna.torsion_protocol(
         twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
         mcSteps = mcSteps//2)
 
@@ -168,7 +168,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     # written this way so it is easier to change the 90 value to something else
     total_steps = int(max_twist_per_rod * L / step_size)
 
-    result = dna.torsionProtocol(
+    result = dna.torsion_protocol(
         twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
         mcSteps=mcSteps, nsamples=mcSteps)
 
@@ -180,7 +180,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
 
 # def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
 #     dna = dnaMC.NucleosomeArray(L=L, nucPos=np.array(nucpos))
-#     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+#     results = dna.torsion_protocol(twists = step_size * np.arange(1, n+1, 1),
 #                                   mcSteps=mcSteps, nsamples=nsamples)
 #     return (dna, results)
 
@@ -199,9 +199,9 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
         basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
     dna.env.T = T
     if protocol == "twist":
-        results = dna.torsionProtocol(**protocol_kwargs)
+        results = dna.torsion_protocol(**protocol_kwargs)
     elif protocol == "relax":
-        results = dna.relaxationProtocol(**protocol_kwargs)
+        results = dna.relaxation_protocol(**protocol_kwargs)
     elif protocol == "config":
         if protocol_kwargs:
             raise ValueError("Unexpected kwargs. Did you intend to use the "
@@ -236,7 +236,7 @@ def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
     else:
         raise ValueError("The first argument initialFn should be either 'delta'"
                          " or 'step'.")
-    results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
+    results = dna.relaxation_protocol(mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
 
 
@@ -291,8 +291,8 @@ def _compute_extension_helper(
         pre_steps=None, extra_steps=None, nsamples=None, **opt_kwargs):
     dna = dnaClass(
         L=L, kickSize=kickSize, B=B, T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
-    _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
-    ds = dna.relaxationProtocol(
+    _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
+    ds = dna.relaxation_protocol(
         force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
     ds["tsteps"] += pre_steps
     return (dna, ds)
@@ -341,8 +341,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     def inner(kickSize, force):
         dna = dnaClass(L=L, kickSize=kickSize, B=B,
                        T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
-        _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
-        ds = dna.relaxationProtocol(
+        _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
+        ds = dna.relaxation_protocol(
             force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
         ds["tsteps"] += pre_steps
         return (dna, ds)

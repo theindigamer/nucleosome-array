@@ -6,6 +6,7 @@ src/*.pyc
 src/*.json
 src/*.pckl
 src/*.nb
+src/*.nc
 *.png
 *.ipynb
 *.npy

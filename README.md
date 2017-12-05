@@ -20,6 +20,18 @@ These can be easily installed using [`conda`][conda]
 conda install numba seaborn xarray hypothesis pytest
 ```
 
+There is an additional package [`nbstripout`][nbstripout] which is useful for
+working with Jupyter notebooks. Before using `git commit`, you can run the
+`backup_nb.py` file (it is executable) so that it will generate new copies
+of notebooks without output. These can be put in version control without
+large file sizes. For some reason, the `conda` version of `nbstripout`
+doesn't seem to be working properly, so you should install it using `pip`.
+
+```
+pip install nbstripout
+# if that doesn't work, try sudo -H pip install nbstripout
+```
+
 Tests can be run by `cd`-ing into `src` and running `pytest`.
 
 [numba]: http://numba.pydata.org/
@@ -28,13 +40,17 @@ Tests can be run by `cd`-ing into `src` and running `pytest`.
 [hypothesis]: http://hypothesis.works/
 [pytest]: https://docs.pytest.org/en/latest/index.html
 [conda]: https://github.com/conda/conda
+[nbstripout]: https://github.com/kynan/nbstripout
 
 ## Bibliography
 
 The source code comments sometimes refer to papers for values etc.
 The bibliography for those references is given here for easy cross-verification.
 
-[DS] Daniels and Sethna - Nucleation at the DNA Supercoiling transition
-
 [B] Bancaud et al. - Structural plasticity of single chromatin fibers revealed
 by torsional manipulation
+
+[DS] Daniels and Sethna - Nucleation at the DNA Supercoiling transition
+
+[F] Forth et al. - Abrupt Buckling Transition Observed during the Plectoneme
+Formation of Individual DNA Molecules
