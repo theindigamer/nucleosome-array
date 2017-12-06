@@ -55,17 +55,21 @@ class Evolution:
         self.tstep_i = 0
         if twists is None:
             tsteps = np.cumsum(nsteps)
+            end = None
         else:
             tmp = np.cumsum(nsteps)
             tsteps = np.concatenate([tmp + tmp[-1] * i
                                      for i in range(len(twists))])
+            end = np.array([[tw for _ in nsteps] for tw in twists]).flatten()
         if initial:
             tsteps = np.insert(tsteps, 0, 0)
         self.data = dna.constants()
         self.data.update({
+            # TODO: Check if None can be saved in a netcdf file.
             "twists": twists,
             "tsteps": tsteps,
             "angles": np.empty((tsteps.size, dna.L, 3)),
+            "end"   : end,
             "extension": np.empty((tsteps.size, 3)),
             "energy": np.empty(tsteps.size),
             "acceptance": np.empty((tsteps.size, 3)),
@@ -113,6 +117,7 @@ class Evolution:
         data_vars = {
             "twists": data["twists"],
             "angles": (["tsteps", "n", "angle_str"], data["angles"]),
+            "end": (["tsteps", "angle_str"], data["end"]),
             "extension": (["tsteps", "axis"], data["extension"]),
             "energy": (["tsteps"], data["energy"]),
             "acceptance": (["tsteps", "angle_str"], data["acceptance"]),
@@ -128,7 +133,7 @@ class Evolution:
             "timing_keys": timing_keys,
         }
         attrs = {
-            "initial": self.initial,
+            "initial": int(self.initial),
         }
         if "nucleosome" in data.keys():
             attrs.update({"nucleosome": data["nucleosome"]})
