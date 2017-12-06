@@ -30,7 +30,7 @@ class strand:
         self.L = L
         self.B = B                # in m·kT_room
         self.C = C                # in m·kT_room
-        self.d = SL / (1.*self.L) # in m
+        self.d = SL / self.L      # in m
         self.rd = rd              # in m
         self.psiEnd = psiEnd
         self.thetaEnd = thetaEnd
@@ -86,7 +86,7 @@ class strand:
            r (columns) is ordered as {x,y,z,psi}.
            * We don't have psi depend on r.
            ** We should check with * numerically."""
-        if tangent is None: tangent=self.tangent()
+        if tangent is None: tangent=self.tangent_vectors()
         t = tangent
         D = np.sqrt( t[...,0]**2 + t[...,1]**2 + t[...,2]**2 )
         p = np.sqrt( t[...,0]**2 + t[...,1]**2 + 1.E-16 )
@@ -202,8 +202,9 @@ def makeFilename( directory, elementList, extension, dated=True ):
     return filename
 
 def project( vecA, vecB ):
-    """ Returns ( vecA . vecB ) vecB.
-        Vectors A and B must have shape (N,3)."""
+    u""" Returns ( vecA · vecB ) vecB.
+
+    Vectors A and B must have shape (N,3)."""
     AdotB = np.einsum('...j,...j', vecA, vecB)
     vec = vecB.copy()
     for i in range(3):
@@ -211,8 +212,9 @@ def project( vecA, vecB ):
     return vec
 
 def projectPerp( vecA, vecB ):
-    """ Returns vecA - ( vecA . vecB ) vecB.
-        Vectors A and B must have shape (N,3)."""
+    u"""Returns vecA - ( vecA · vecB ) vecB.
+
+    Vectors A and B must have shape (N,3)."""
     return vecA - project( vecA, vecB )
 
 def normalize( vector, N=1.0 ):

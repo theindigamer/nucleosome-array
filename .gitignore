@@ -1,4 +1,5 @@
 _build/
+src/fig/
 src/__pycache__
 src/.cache
 src/.hypothesis

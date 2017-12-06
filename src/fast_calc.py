@@ -654,6 +654,6 @@ def md_effective_torques(RStart, Rs, REnd, DRs, L, C, B, d):
                                   * DRs[0, j, k, i])
                 tau[-1, i + 1] += (c * (Rs[-2, j, k] + REnd[j, k])
                                    * DRs[-1, j, k, i])
-                tau[1:-1, i + 1] += (c * (Rs[:-2, j, k] + RLp1[2:, j, k])
+                tau[1:-1, i + 1] += (c * (Rs[:-2, j, k] + Rs[2:, j, k])
                                      * DRs[1:-1, j, k, i])
     return tau
