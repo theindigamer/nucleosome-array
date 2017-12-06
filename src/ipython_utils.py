@@ -1,6 +1,6 @@
 import dnaMC
-import utils
-
+import fast_calc
+import gen_utils as gu
 
 font = {'family' : 'DejaVu Sans',
         'size'   : 14}
@@ -29,13 +29,6 @@ import pprint
 #------------------#
 
 ANGLES_STR = ["φ", "θ", "ψ"]
-
-def mean_std(x, **kwargs):
-    return (x.mean(**kwargs), x.std(**kwargs))
-
-def _norm(da, dim='axis'):
-    """Computes the Euclidean norm of a DataArray along a dimension."""
-    return ((da**2).sum(dim=dim))**0.5
 
 #-------------------#
 # Utility functions #
@@ -75,6 +68,9 @@ def _wrapper(seed, f, *args, **kwargs):
     np.random.seed(seed)
     return f(*args, **kwargs)
 
+# TODO: generalize run_sim to work in parallel with multiple argument sets.
+# For example, if you have runs=1 and forces=[0.1, 0.2], then we should
+# still create 2 jobs and run these two in parallel.
 def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
 
     # 1E8 is arbitrary, just use some big number
@@ -95,7 +91,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
     else:
         flag = False
         results = tmp
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["run"], [np.arange(runs)])
 
@@ -114,12 +110,12 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
     for ks in kickSizes:
         dna = dnaMC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
                              strand_len=rod_len * L, B=B)
-        result = dna.relaxationProtocol(
+        result = dna.relaxation_protocol(
             force=force, mcSteps=mcSteps, nsamples=nsamples)
         results.append(result)
     # TODO: Fix concat_datasets so this 'hack' of considering only the θ
     # kickSize is not required.
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["kickSize"], [np.array(kickSizes)[:, 1]])
     return results
@@ -134,8 +130,9 @@ def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   dnaClass=dnaMC.NakedDNA):
     """Twisting a DNA with one end."""
     dna = dnaClass(L=L, T=T, kickSize=kickSize)
-    result = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
-                                 mcSteps=mcSteps, nsamples=nsamples)
+    twists = step_size * np.arange(1, n + 1, 1)
+    result = dna.torsion_protocol(
+        twists=twists, mcSteps=mcSteps, nsamples=nsamples)
     return (dna, result)
 
 def simulate_dna(runs=5, **kwargs):
@@ -163,7 +160,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     pre_sampling_steps = int(sampling_start_twist_per_rod * L / step_size)
 
     dna = dnaClass(L=L)
-    res = dna.torsionProtocol(
+    res = dna.torsion_protocol(
         twists = step_size * np.arange(1, pre_sampling_steps + 1, 1),
         mcSteps = mcSteps//2)
 
@@ -171,7 +168,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
     # written this way so it is easier to change the 90 value to something else
     total_steps = int(max_twist_per_rod * L / step_size)
 
-    result = dna.torsionProtocol(
+    result = dna.torsion_protocol(
         twists = step_size * np.arange(pre_sampling_steps, total_steps + 1, 1),
         mcSteps=mcSteps, nsamples=mcSteps)
 
@@ -183,7 +180,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
 
 # def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
 #     dna = dnaMC.NucleosomeArray(L=L, nucPos=np.array(nucpos))
-#     results = dna.torsionProtocol(twists = step_size * np.arange(1, n+1, 1),
+#     results = dna.torsion_protocol(twists = step_size * np.arange(1, n+1, 1),
 #                                   mcSteps=mcSteps, nsamples=nsamples)
 #     return (dna, results)
 
@@ -202,9 +199,9 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
         basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
     dna.env.T = T
     if protocol == "twist":
-        results = dna.torsionProtocol(**protocol_kwargs)
+        results = dna.torsion_protocol(**protocol_kwargs)
     elif protocol == "relax":
-        results = dna.relaxationProtocol(**protocol_kwargs)
+        results = dna.relaxation_protocol(**protocol_kwargs)
     elif protocol == "config":
         if protocol_kwargs:
             raise ValueError("Unexpected kwargs. Did you intend to use the "
@@ -239,7 +236,7 @@ def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
     else:
         raise ValueError("The first argument initialFn should be either 'delta'"
                          " or 'step'.")
-    results = dna.relaxationProtocol(mcSteps=mcSteps, nsamples=nsamples)
+    results = dna.relaxation_protocol(mcSteps=mcSteps, nsamples=nsamples)
     return (dna, results)
 
 
@@ -272,7 +269,7 @@ def dna_check_acceptance(Ts, kickSizes, *args, mode="product", **kwargs):
     for (T, ks) in T_ks:
         _, res = simulate_diffusion(*args, T=T, kickSize=ks, **kwargs)
         results.append(res.copy())
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         results, ["angles", "extension", "energy", "acceptance", "timing"],
         ["temperature", "kickSize"], [Ts, kickSizes])
     return results
@@ -294,8 +291,8 @@ def _compute_extension_helper(
         pre_steps=None, extra_steps=None, nsamples=None, **opt_kwargs):
     dna = dnaClass(
         L=L, kickSize=kickSize, B=B, T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
-    _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
-    ds = dna.relaxationProtocol(
+    _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
+    ds = dna.relaxation_protocol(
         force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
     ds["tsteps"] += pre_steps
     return (dna, ds)
@@ -307,7 +304,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     ``forces`` is some nonempty iterable with the desired force values to use.
     Similarly for ``kickSizes``. If ``kickSizes`` contains more than one
-    element, multiple graphs are draw side-by-side.
+    element, multiple graphs are drawn side-by-side.
     ``disordered`` creates "disordered" DNA, i.e., the zeros of bending energy
     are randomly shifted from zero physical bend.
     ``demo`` is provided for quickly debugging the drawing code without
@@ -344,8 +341,8 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     def inner(kickSize, force):
         dna = dnaClass(L=L, kickSize=kickSize, B=B,
                        T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
-        _ = dna.relaxationProtocol(force=force, mcSteps=pre_steps, nsamples=1)
-        ds = dna.relaxationProtocol(
+        _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
+        ds = dna.relaxation_protocol(
             force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
         ds["tsteps"] += pre_steps
         return (dna, ds)
@@ -365,7 +362,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     #     for (ks, f) in itertools.product(kickSizes_arr, forces_arr))
     # dnas, datasets = list(zip(*tmp))
 
-    results = utils.concat_datasets(
+    results = fast_calc.concat_datasets(
         datasets, ["angles", "extension", "energy", "acceptance", "timing"],
         ["kickSize", "force"], [kickSizes_arr[:, 1], forces_arr])
     results.attrs.update({
@@ -402,14 +399,14 @@ def draw_force_extension(dataset, acceptance=True):
     for (j, ks) in enumerate(kickSizes):
         # 'axis' dimension is the last dimension
         # there doesn't seem to be a simple way to broadcast np.linalg.norm
-        tmp = _norm(dataset["extension"].sel(kickSize=ks), dim='axis')
-        mean, stdev = mean_std(tmp.groupby("force"))
+        tmp = gu.norm(dataset["extension"].sel(kickSize=ks), dim='axis')
+        mean, stdev = gu.mean_std(tmp.groupby("force"))
         print(mean.values)
         print(forces)
         axes[0, j].errorbar(mean.values, forces, xerr=stdev.values,
                             capsize=4.0, linestyle='')
         axes[0, j].plot(ms_curve_x, ms_curve_y)
-        axes[0, j].set_xlim(right=740)
+        axes[0, j].set_xlim(left=500, right=740)
         axes[0, j].set_ylim(bottom=-0.5, top=10+0.5)
         axes[0, j].set_title("kick size = {0}".format(ks))
         axes[0, j].set_xlabel("")
@@ -423,7 +420,7 @@ def draw_force_extension(dataset, acceptance=True):
         for (j, ks) in enumerate(kickSizes):
             tmp = dataset["acceptance"].sel(kickSize=ks)
             for (j_a, angle) in enumerate(ANGLES_STR):
-                mean, stdev = mean_std(tmp.isel(angle_str=j_a).groupby("force"))
+                mean, stdev = gu.mean_std(tmp.isel(angle_str=j_a).groupby("force"))
                 axes[1, j].errorbar(forces, mean.values, yerr=stdev.values,
                                     label=angle)
                 axes[1, j].set_ylim(bottom=0, top=1)
@@ -523,13 +520,13 @@ def draw_angle_probability(dataset, angle_str="theta", run=0):
 def run_bend_autocorr_rw(count=1000, d=5, B=40, L=128, phi=None, C=None):
     if phi is None:
         # C is ignored, we work in 2D
-        theta = utils.generate_rw_2d(d, B, count, L)
+        theta = fast_calc.generate_rw_2d(d, B, count, L)
         phi = np.zeros((count, L))
         psi = np.zeros((count, L))
         total = np.moveaxis(np.array([phi, theta, psi]), 0, 2)
     else:
-        total = utils.generate_rw_3d(d, B, count, L, C=C, final_psi=0.)
-    ac = utils.bend_autocorr(total, axis=2, n_axis=1)
+        total = fast_calc.generate_rw_3d(d, B, count, L, C=C, final_psi=0.)
+    ac = fast_calc.bend_autocorr(total, axis=2, n_axis=1)
     # Create fake information for dataset, so that
     # 1. we can reuse the drawing functions which work for simulations directly
     # 2. we can reuse parts of those drawing functions if we want slightly
@@ -593,7 +590,7 @@ def draw_bend_autocorr_rw(dataset, dims=2):
     for ax, count in zip(axes[0], display_counts):
         tmp = (dataset["bend_autocorr"]
                .isel(run=0, kickSize=0, tsteps=slice(count)))
-        tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+        tmp_mean, tmp_std = gu.mean_std(tmp, dim='tsteps')
         ax.errorbar(x, tmp_mean.values, yerr=tmp_std.values,
                     capsize=2.0, label="RW", color="red"
         )
@@ -664,7 +661,7 @@ def draw_bend_autocorr(dataset, energy=False, rw_dataset=None, dims=2):
         for ks in dataset["kickSize"]:
             tmp = (dataset["bend_autocorr"]
                    .sel(run=i, kickSize=ks, tsteps=np.arange(start, stop, step)))
-            tmp_mean, tmp_std = mean_std(tmp, dim='tsteps')
+            tmp_mean, tmp_std = gu.mean_std(tmp, dim='tsteps')
             ax.errorbar(x, tmp_mean.values, # yerr=tmp_std.values,
                         capsize=2.0, label="MC, ks={0}".format(ks.values), color='blue')
             # ax.set_yscale('log')
@@ -716,6 +713,7 @@ def plot_angles(dna, result, totalOnly=True, show=True):
     if show:
         plt.show()
 
+
 def draw_energy(dataset, axis=None, show=None):
     flag = axis is None
     if flag:
@@ -723,7 +721,7 @@ def draw_energy(dataset, axis=None, show=None):
     # else:
     #     new_axis = axis
     tsteps = dataset["tsteps"]
-    mean, stdev = mean_std(dataset["energy"].sel(tsteps=tsteps), dim=['run'])
+    mean, stdev = gu.mean_std(dataset["energy"].sel(tsteps=tsteps), dim=['run'])
     if len(np.shape(mean)) != 1:
         print("WARNING: draw_energy encountered unexpected dimensions"
               " after averaging over runs.")
@@ -759,7 +757,7 @@ def draw_angle_profile(dataset, axis=None, total_only=False, show=None):
     else:
         raise ValueError("show should be one of None, int (> 0) or the string 'all'.")
 
-    mean, stdev = mean_std(dataset["angles"].sel(tsteps=tsteps)/(2*np.pi), dim=['run'])
+    mean, stdev = gu.mean_std(dataset["angles"].sel(tsteps=tsteps)/(2*np.pi), dim=['run'])
     if len(np.shape(mean)) != 3: # one for time, one for rods, one for 3 angles
         print("WARNING: draw_angle_profile encountered unexpected dimensions"
               " after averaging over runs.")
@@ -797,7 +795,7 @@ def draw_energy_autocorr(dataset, axis=None):
     corr_ds = xr.DataArray(en_corr, coords=dataset["energy"].coords,
                            attrs=dataset["energy"].attrs)
     # TODO: StackOverflow - ? easier way to cast fft over dataset.
-    mean, stdev = mean_std(corr_ds, dim=['run'])
+    mean, stdev = gu.mean_std(corr_ds, dim=['run'])
     # TODO: add fitting+plotting code to determine+display correlation time
     if len(np.shape(mean)) != 1:
         print("WARNING: draw_energy encountered unexpected dimensions"
@@ -817,8 +815,8 @@ def draw_acceptance(dataset, axis=None):
     else:
         new_axis = axis
     for (i, a) in enumerate(ANGLES_STR):
-        mean, stdev = mean_std(dataset["acceptance"].isel(angle_str=i),
-                               dim=["run"])
+        mean, stdev = gu.mean_std(
+            dataset["acceptance"].isel(angle_str=i), dim=["run"])
         new_axis.errorbar(
             dataset["tsteps"].values, mean.values, yerr=stdev.values, label=a)
     new_axis.legend(loc="upper right")
@@ -840,6 +838,7 @@ def draw_diffusion(dataset):
     draw_acceptance(dataset, ax[1][0])
     draw_energy(dataset, ax[1][1])
     draw_energy_autocorr(dataset, ax[1][2])
+
 
 # TODO: fix this function to work with datasets
 def plot_evolution(results, show=True, fits=None):

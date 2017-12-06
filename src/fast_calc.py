@@ -17,17 +17,16 @@ def _scale(arr, last=0.):
     return a
 
 def generate_rw_2d(d, B, count, L, last=0.):
-    """Generates random walks in 2D with the right boundary conditions.
+    u"""Generates random walks in 2D with the right boundary conditions.
 
     Args:
         d (float): length of 1 rod in nm
-        B (float): usual bending constant in nm kT
+        B (float): usual bending constant in nm·kT
         count (int): number of random walks to generate
         L (int): number of rods
 
     Returns:
-        Array of θ values corresponding to the random walk.
-        Shape (count, L).
+        θ values (Array[(count, L)]) corresponding to the random walk.
     """
     sigma = np.sqrt(d / B)
     beta = np.empty((count, L))
@@ -54,7 +53,16 @@ def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
         If final_psi and C are both supplied, the last value of psi is fixed
         to the final_psi value. This can be useful if you want to emulate
         twisting.
+
+    FIXME:
+        Implementation is wholly incorrect.
     """
+    # We know H(φ, θ, ψ) / kT -> we should use this for sampling instead of
+    # misusing B and C directly. Possible approaches:
+    #   * Metropolis
+    #   * Slice sampling - see Neal Radford, Colin has code.
+    #   * Event Chain Monte Carlo (Krauth et al.) - Colin says it's very fast.
+    #     https://arxiv.org/pdf/0903.2954.pdf
     theta = generate_rw_2d(d, B, count, L)
     if C is None:
         psi = np.zeros((count, L))
@@ -70,7 +78,7 @@ def autocorr_fft(arr):
     lengths = arr.shape[:-2]
     tangents = np.empty_like(arr)
     for inds in np.ndindex(lengths):
-        tangents[inds] = tangent_vector(arr[inds])
+        tangents[inds] = unit_tangent_vectors(arr[inds])
     tmpk = np.fft.rfft(tangents, axis=-2)
     corr = np.fft.irfft(tmpk * tmpk.conj(), axis=-2)
     # needs additional normalization after summing
@@ -88,7 +96,7 @@ def autocorr_brute_force(arr):
         for n in range(m, L):
             counters[n - m] += 1
     for inds in np.ndindex(lengths):
-        tangents[inds] = tangent_vector(arr[inds])
+        tangents[inds] = unit_tangent_vectors(arr[inds])
         for m in range(L):
             for n in range(m, L):
                 arr3[inds][n - m] += tangents[inds][m] * tangents[inds][n]
@@ -120,7 +128,7 @@ def bend_angles(arr, axis=-1, n_axis=-2):
         lengths = arr.shape[:-2]
         tangents = np.empty_like(arr)
         for inds in np.ndindex(lengths):
-            tangents[inds] = tangent_vector(arr[inds])
+            tangents[inds] = unit_tangent_vectors(arr[inds])
         beta = np.empty(arr.shape[:-1])
         beta[..., -1] = 0.
         beta[..., :-1] = np.arccos(
@@ -260,7 +268,7 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
 #------------------------------#
 
 @jit(cache=True, nopython=True)
-def tangent_vector1(euler):
+def unit_tangent_vector1(euler):
     t = np.empty(3)
     phi = euler[0]
     theta = euler[1]
@@ -272,7 +280,7 @@ def tangent_vector1(euler):
 
 
 @jit(cache=True, nopython=True)
-def tangent_vector(euler):
+def unit_tangent_vectors(euler):
     n = len(euler)
     t = np.empty((n, 3))
     for i in range(n):
@@ -290,10 +298,10 @@ def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm.
 
     Args:
-        reject (Array[float; (x,)]):
+        reject (Array[(x,); bool]):
             Array to be modified in-place. If even is True, it is assumed that
-            reject has 1.0 at even indices and similarly when even is False.
-        deltaE (Array[float; (x,)]):
+            reject has True at even indices and similarly when even is False.
+        deltaE (Array[(x,)]):
             Local energy changes used to check for rejection. Energy should be
             in units of kT.
         even (bool): Indicates if even/odd indices of deltaE should be checked.
@@ -303,14 +311,14 @@ def metropolis(reject, deltaE, even=True):
 
     Note:
         The x in the sizes indicates that the two array sizes have to be equal.
-        For example, you will have x = L - 2 when the two rods at the end have
+        For example, you will have x = L - 1 when the two rods at the end have
         fixed orientation.
     """
     for i in range(0 if even else 1, reject.size, 2):
         if deltaE[i] < 0:
-            reject[i] = 0.
+            reject[i] = False
         elif deltaE[i] < 16 and np.exp(-deltaE[i]) > np.random.rand():
-            reject[i] = 0.
+            reject[i] = False
 
 
 @jit(cache=True, nopython=True)
@@ -318,14 +326,14 @@ def twist_bend_angles(Deltas, squared):
     u"""Computes twist and bend values for an array of Delta matrices.
 
     Args:
-        Deltas (Array[float; (L-1, 3, 3)]):
-            Matrices describing relative twist between consecutive rods.
+        Deltas (Array[(L, 3, 3)]):
+            Matrices describing relative twists and bends at hinges.
         squared (bool): Returns
 
     Returns:
         (β², β², Γ²) if squared is true.
         (β₁, β₂, Γ) if squared is false.
-        Individual terms are arrays of shape (L-1,).
+        Individual terms are arrays of shape (L,).
 
     Note:
         See [DS, Appendix D] for equations.
@@ -353,43 +361,50 @@ def twist_bend_angles(Deltas, squared):
             Gamma[i]  = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
         return (beta_1, beta_2, Gamma)
 
+
 @jit(cache=True, nopython=True)
-def rotation_matrices(euler):
+def set_rotation_matrix(angles, res):
+    phi = angles[0]
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    theta = angles[1]
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    psi = angles[2]
+    cos_psi = np.cos(psi)
+    sin_psi = np.sin(psi)
+
+    res[0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
+    res[0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
+    res[0, 2] = sin_theta * sin_phi
+
+    res[1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
+    res[1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
+    res[1, 2] = cos_phi * sin_theta
+
+    res[2, 0] = sin_theta * sin_psi
+    res[2, 1] = -cos_psi * sin_theta
+    res[2, 2] = cos_theta
+
+@jit(cache=True, nopython=True)
+def rotation_matrices(euler, end):
     u"""Computes rotation matrices element-wise.
 
     Args:
-        euler (Array[float; (L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+        euler (Array[(L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
+        end (Array[(3,)]): Euler angles for last point, ordered [φ, θ, ψ].
 
     Returns:
-        Passive rotation matrices in an array of shape (L, 3, 3).
+        Passive rotation matrices in an array of shape (L+1, 3, 3).
 
     Note:
         Represents [DS, Eqn. (B1, B2)].
     """
     n = len(euler)
-    R = np.empty((n, 3, 3))
+    R = np.empty((n + 1, 3, 3))
     for i in range(n):
-        phi = euler[i, 0]
-        cos_phi = np.cos(phi)
-        sin_phi = np.sin(phi)
-        theta = euler[i, 1]
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        psi = euler[i, 2]
-        cos_psi = np.cos(psi)
-        sin_psi = np.sin(psi)
-
-        R[i, 0, 0] = cos_phi * cos_psi - cos_theta * sin_phi * sin_psi
-        R[i, 0, 1] = cos_phi * sin_psi + cos_theta * cos_psi * sin_phi
-        R[i, 0, 2] = sin_theta * sin_phi
-
-        R[i, 1, 0] = -cos_psi * sin_phi - cos_theta * cos_phi * sin_psi
-        R[i, 1, 1] = -sin_phi * sin_psi + cos_theta * cos_phi * cos_psi
-        R[i, 1, 2] = cos_phi * sin_theta
-
-        R[i, 2, 0] = sin_theta * sin_psi
-        R[i, 2, 1] = -cos_psi * sin_theta
-        R[i, 2, 2] = cos_theta
+        set_rotation_matrix(euler[i], R[i])
+    set_rotation_matrix(end, R[n])
     return R
 
 def partition(n_parts, total):
@@ -625,3 +640,20 @@ def md_derivative_rotation_matrices(euler):
         DR[i, 2, 2, 1] = -sin_theta
         DR[i, 2, 2, 2] = 0.
     return DR
+
+@jit(cache=True, nopython=True)
+def md_effective_torques(RStart, Rs, REnd, DRs, L, C, B, d):
+    tau = np.zeros((L, 4))
+    c1 = - (C + 2. * B) / (2. * d)
+    c2 = - C / (2. * d)
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+                c = c1 if k == 2 else c2
+                tau[0, i + 1] += (c * (RStart[j, k] + Rs[1, j, k])
+                                  * DRs[0, j, k, i])
+                tau[-1, i + 1] += (c * (Rs[-2, j, k] + REnd[j, k])
+                                   * DRs[-1, j, k, i])
+                tau[1:-1, i + 1] += (c * (Rs[:-2, j, k] + Rs[2:, j, k])
+                                     * DRs[1:-1, j, k, i])
+    return tau

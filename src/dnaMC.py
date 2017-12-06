@@ -1,34 +1,23 @@
 import numpy as np
 import time
-import utils
+import fast_calc
 import xarray as xr
-from numba import jit
 
-
-class Environment:
-    """Describes the environment of the DNA/nucleosome array.
-
-    Future properties one might include: salt/ion concentration etc.
-    """
-    ROOM_TEMP = 293.15 # in Kelvin
-    MIN_TEMP = 1E-10   # in Kelvin
-    def __init__(self, T=ROOM_TEMP):
-        self.T = T
-
+from sim_utils import AngularDescription, Environment
 
 class Simulation:
     """Simulation parameters that can be varied."""
     DEFAULT_KICK_SIZE = 0.1
     ntimers = 10
     timer_descr = {
-        0 : "Half of inner loop in metropolisUpdate",
-        1 : "Half of half of inner loop in metropolisUpdate",
-        2 : "Calls to bendingEnergyDensity",
-        3 : "Calls to twistEnergyDensity",
-        4 : "Calculating Rs in deltaMatrices via rotationMatrices",
-        5 : "Calculating a in deltaMatrices",
-        6 : "Calculating b in deltaMatrices",
-        7 : "Calculating deltas in deltaMatrices",
+        0 : "Half of inner loop in metropolis_update",
+        1 : "Half of half of inner loop in metropolis_update",
+        2 : "Calls to bend_energy_density",
+        3 : "Calls to twist_energy_density",
+        4 : "Calculating Rs in delta_matrices via rotation_matrices",
+        5 : "Calculating a in delta_matrices",
+        6 : "Calculating b in delta_matrices",
+        7 : "Calculating deltas in delta_matrices",
         8 : "Total time",
     }
 
@@ -51,11 +40,14 @@ class Evolution:
 
         ``twists`` is either a nonempty ``numpy`` array (twisting) or ``None``
         (relaxation).
+
         ``nsteps`` represents successive number of MC steps.
-        If ``twists`` is ``None``, it is interpreted to represent the entire
-        simulation. So [10, 10, 5] means that the simulation has 25 steps total.
-        If ``twists`` is a numpy array, it is interpreted to be the number of
-        steps between consecutive twists.
+
+        If ``twists`` is ``None``, ``nsteps`` is interpreted to represent the
+        entire simulation. So [10, 10, 5] means that the simulation has 25 steps
+        total.
+        If ``twists`` is a numpy array, ``nsteps`` is interpreted to be the
+        number of steps between consecutive twists.
         So ``twists = [0, pi/2]`` and ``nsteps=[10, 10, 5]`` implies there are
         50 MC steps in total, split up as 10, 10, 5, 10, 10, 5.
         """
@@ -63,24 +55,28 @@ class Evolution:
         self.tstep_i = 0
         if twists is None:
             tsteps = np.cumsum(nsteps)
+            end = None
         else:
             tmp = np.cumsum(nsteps)
             tsteps = np.concatenate([tmp + tmp[-1] * i
                                      for i in range(len(twists))])
+            end = np.array([[tw for _ in nsteps] for tw in twists]).flatten()
         if initial:
             tsteps = np.insert(tsteps, 0, 0)
         self.data = dna.constants()
         self.data.update({
+            # TODO: Check if None can be saved in a netcdf file.
             "twists": twists,
             "tsteps": tsteps,
             "angles": np.empty((tsteps.size, dna.L, 3)),
+            "end"   : end,
             "extension": np.empty((tsteps.size, 3)),
             "energy": np.empty(tsteps.size),
             "acceptance": np.empty((tsteps.size, 3)),
         })
         if initial:
-            (self.save_energy(dna.totalEnergy(force))
-             .save_extension(dna.totalExtension())
+            (self.save_energy(dna.total_energy(force))
+             .save_extension(dna.total_extension())
              .save_acceptance(np.array([0.5, 0.5, 0.5]))
              .save_angles(dna))
 
@@ -121,6 +117,7 @@ class Evolution:
         data_vars = {
             "twists": data["twists"],
             "angles": (["tsteps", "n", "angle_str"], data["angles"]),
+            "end": (["tsteps", "angle_str"], data["end"]),
             "extension": (["tsteps", "axis"], data["extension"]),
             "energy": (["tsteps"], data["energy"]),
             "acceptance": (["tsteps", "angle_str"], data["acceptance"]),
@@ -136,7 +133,7 @@ class Evolution:
             "timing_keys": timing_keys,
         }
         attrs = {
-            "initial": self.initial,
+            "initial": int(self.initial),
         }
         if "nucleosome" in data.keys():
             attrs.update({"nucleosome": data["nucleosome"]})
@@ -147,7 +144,7 @@ class Evolution:
                 attrs.update({k: v})
         return xr.Dataset(data_vars, coords=coords, attrs=attrs)
 
-class NakedDNA:
+class NakedDNA(AngularDescription):
     """A strand of DNA without any nucleosomes.
 
     Euler angles are ordered as phi, theta and psi.
@@ -160,20 +157,28 @@ class NakedDNA:
     def __init__(self, L=740, B=43.0, C=89.0, strand_len=740.0,
                  T=Environment.ROOM_TEMP,
                  kickSize=Simulation.DEFAULT_KICK_SIZE):
-        self.L = L
-        # B, Bm and C are in nm kT
-        self.B = B
-        self.Pinv = 0 # no intrinsic disorder
-        self.Bm = B
-        self.C = C
-        self.env = Environment(T=T)
-        self.sim = Simulation(kickSize=kickSize)
-        self.strandLength = strand_len # in nm
-        self.d = self.strandLength/L # total length is 740 nm
-        self.euler = np.zeros((self.L, 3))
-        self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 2)])
-        self.evenMask = np.logical_not(self.oddMask)
+        """Initialize a DNA strand.
 
+        Note:
+            B and C are specified in units of nm·kT, where T is the temperature
+            specified (not necessarily room temperature). If you're using a
+            small temperature for testing stiffness, make sure that you increase
+            the B and C values appropriately.
+        """
+        super().__init__(
+            L, B, C, T, strand_len, euler=np.zeros((L, 3)), end=np.zeros(3))
+        if T < 273 and B == 43.0 and C == 89.0:
+            print("WARNING: You are using a low temperature but haven't changed"
+                  " either B or C.")
+        self.Pinv = 0 # no intrinsic disorder
+        self.Bm = B   # dummy value, kept for consistency with disordered DNA.
+        self.sim = Simulation(kickSize=kickSize)
+        self.oddMask = np.array([i % 2 == 1 for i in range(self.L - 1)])
+        self.oddMask.setflags(write=False)
+        self.evenMask = np.logical_not(self.oddMask)
+        self.evenMask.setflags(write=False)
+
+    # FIXME: Units of different variables should also be saved.
     def constants(self):
         return {
             "temperature": self.env.T,
@@ -182,128 +187,87 @@ class NakedDNA:
             "Bm": self.Bm,
             "C": self.C,
             "rodCount": self.L,
-            "strandLength": self.strandLength,
+            "strandLength": self.strand_len,
             "rodLength": self.d,
             "kickSize": self.sim.kickSize,
         }
 
-    def rotationMatrices(self):
-        """Returns rotation matrices along the DNA string"""
-        return utils.rotation_matrices(self.euler)
-
-    def deltaMatrices( self, Rs=None ):
+    def delta_matrices(self, Rs=None):
         """Returns Δ matrices describing bends/twists between consecutive rods."""
         timers = self.sim.timers
         start = time.clock()
         if Rs is None:
-            Rs = self.rotationMatrices()
+            Rs = self.rotation_matrices()
         timers[4] += time.clock() - start
 
         start = time.clock()
-        a = np.swapaxes( Rs[:-1], 1, 2 )
+        R_i_transpose = np.swapaxes(Rs[:-1], 1, 2)
         timers[5] += time.clock() - start
 
         start = time.clock()
-        b = Rs[1:]
+        R_i_plus_1 = Rs[1:]
         timers[6] += time.clock() - start
 
         start = time.clock()
-        deltas = a @ b
+        deltas = R_i_transpose @ R_i_plus_1
         timers[7] += time.clock() - start
         return deltas
 
-    @jit(cache=True)
-    def twistBendAngles(self, Ds=None):
-        """ Returns the twist and bending angles."""
-        if Ds is None:
-            Ds = self.deltaMatrices()
-        return utils.twist_bend_angles(Ds, self.sim.squared)
+    def twist_bend_angles(self, Deltas=None):
+        """Computes the twist and bend angles.
 
-    def bendingEnergyDensity(self, angles=None):
-        """ Returns the bending energy density.
-            Enter angles in a tuple( arrays ) format."""
-        if angles is None:
-            angles = self.twistBendAngles()
+        See ``fast_calc.twist_bend_angles`` for details. The squared argument
+        is set from an attribute.
+        """
+        if Deltas is None:
+            Deltas = self.delta_matrices()
+        return fast_calc.twist_bend_angles(Deltas, self.sim.squared)
+
+    def bend_energy_density(self, twist_bends=None):
+        """Computes bending energy at each hinge."""
+        if twist_bends is None:
+            twist_bends = self.twist_bend_angles()
         if self.sim.squared:
-            energy_density = self.Bm / (2.0*self.d) * angles[0]
+            energy_density = self.B / (2.0 * self.d) * twist_bends[0]
         else:
-            energy_density = (self.Bm / (2.0*self.d)
-                              * (angles[0]**2 + angles[1]**2))
-        return energy_density, angles
+            energy_density = (self.B / (2.0 * self.d)
+                              * (twist_bends[0]**2 + twist_bends[1]**2))
+        return energy_density, twist_bends
 
-    def bendingEnergy(self, bendEnergyDensity=None):
-        """ Returns the total bending energy."""
-        if bendEnergyDensity is None:
-            bendEnergyDensity, _ = self.bendingEnergyDensity()
-        return np.sum(bendEnergyDensity)
-
-    def twistEnergyDensity(self, angles=None):
-        """ Returns the twist energy density."""
-        if angles is None:
-            angles = self.twistBendAngles()
+    def twist_energy_density(self, twist_bends=None):
+        """Computes twisting energy for each rod."""
+        if twist_bends is None:
+            twist_bends = self.twist_bend_angles()
         if self.sim.squared:
-            return self.C * angles[-1] / (2.0*self.d)
+            energy_density = self.C / (2.0 * self.d) * twist_bends[2]
         else:
-            return self.C * angles[-1]**2 / (2.0*self.d)
+            energy_density = self.C / (2.0 * self.d) * twist_bends[2]**2
+        return energy_density, twist_bends
 
-    def twistEnergy(self, twistEnergyDensity=None ):
-        """ Returns the total twist energy. """
-        if twistEnergyDensity is None:
-            twistEnergyDensity = self.twistEnergyDensity()
-        return np.sum(twistEnergyDensity)
+    def total_energy_density(self, force):
+        """Computes total energy for each rod.
 
-    def stretchEnergyDensity(self, force, tangent=None):
-        """ Returns the stretching energy density.
-            Enter the force in pN
-            Our energy is in unit of kT.
-            Es = force * tangent * prefactor
-            prefactor = 1E-12 1E-9/ (1.38E-23 T).
-            Change prefactor to change the temperature."""
-        T = max(self.env.T, Environment.MIN_TEMP)
-        prefactor = 1.0 / (1.38E-2 * T)
-        if tangent is None:
-            tangent = self.tVector()
-        return -force * prefactor * tangent[:-1,2]
+        WARNING: The force is a scalar here, unlike the base class.
 
-    def stretchEnergy(self, force, stretchEnergyDensity=None):
-        """ Returns the total stretching energy. """
-        if stretchEnergyDensity is None:
-            stretchEnergyDensity = self.stretchEnergyDensity(force)
-        return np.sum(stretchEnergyDensity)
-
-    def totalEnergyDensity(self, force):
-        """ Returns the total energy density."""
+        Room for optimization - avoid computing x and y components of tangent
+        vectors and corresponding energy terms by specializing the
+        implementation of stretch_energy_density.
+        """
         timers = self.sim.timers
 
         start = time.clock()
-        E, angles = self.bendingEnergyDensity()
+        energy_density, twist_bends = self.bend_energy_density()
         timers[2] += time.clock() - start
 
         start = time.clock()
-        E += self.twistEnergyDensity(angles=angles)
+        energy_density += self.twist_energy_density(twist_bends=twist_bends)[0]
         timers[3] += time.clock() - start
 
-        E += self.stretchEnergyDensity(force)
-        return E
-
-    def totalEnergy(self, force, totalEnergyDensity=None):
-        """ Returns the total energy. """
-        if totalEnergyDensity is None:
-            totalEnergyDensity = self.totalEnergyDensity(force)
-        return np.sum(totalEnergyDensity)
-
-    def tVector(self):
-        """ Returns the tangent vectors. """
-        return utils.tangent_vector(self.euler)
-
-    def rVector( self, t=None ):
-        """ Returns the end points of the t-vectors."""
-        if t is None:
-            t = self.tVector()
-        return np.cumsum( t, axis=0 )
+        energy_density += self.stretch_energy_density(np.array([0., 0., force]))
+        return energy_density
 
     def metropolis_update_seq(self, force, E0, acceptance=False):
-        """ Updates dnaClass Euler angles using Metropolis algorithm.
+        u"""Updates Euler angles sequentially using the Metropolis algorithm.
 
         The iteration order is φ_even, φ_odd, θ_even, θ_odd, ψ_even, ψ_odd.
 
@@ -312,11 +276,15 @@ class NakedDNA:
             ratios. Otherwise, it return the energy density.
 
             The energy density is of shape (L,).
+
+        Note:
+            It is not obvious that this scheme satisfies detailed balance, so we
+            should use metropolis_update instead.
         """
         sigma = self.sim.kickSize
         timers = self.sim.timers
 
-        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 1, 3))
         moves[np.abs(moves) >= 5.0*sigma] = 0.
         if acceptance:
             accepted_frac = np.zeros(3)
@@ -326,38 +294,39 @@ class NakedDNA:
             # Move even rods first.
             # oddMask is False, True, False, ... and we start from euler[1]
             # so only euler[2], euler[4], ... are changed
-            self.euler[1:-1, i] += moves[:, i] * self.oddMask
-            Ef = self.totalEnergyDensity(force)
-            deltaE = ( Ef - E0 )[:-1] + ( Ef - E0 )[1:]
+            self.euler[1:, i] += moves[:, i] * self.oddMask
+            Ef = self.total_energy_density(force)
+            # Next step is explained in metropolis_update
+            deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
             timers[1] += time.clock() - start
 
-            # 1.0 ⇔ true ⇔ move is rejected, first reject all moves of even rods
-            reject = 1.0 * self.oddMask
-            # Now reject == [0., 1., 0., 1., ...]
-            # Some of the 1's should be accepted according to the Metropolis
-            # algorithm. We only need to examine _odd_ indices of reject.
+            # true ⇔ move is rejected, first reject all moves of even rods
+            reject = self.oddMask.copy()
+            # Now reject == [False, True, False, True, ...]
+            # Some True values should be made False according to the Metropolis
+            # algorithm. We only need to examine the _odd_ indices of reject.
             if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = 0.
+                reject[deltaE <= 0.] = False
             else:
-                utils.metropolis(reject, deltaE, even=False)
-            self.euler[1:-1,i] -= moves[:, i] * reject
-            E0 = self.totalEnergyDensity(force)
+                fast_calc.metropolis(reject, deltaE, even=False)
+            self.euler[1:, i] -= moves[:, i] * reject
+            E0 = self.total_energy_density(force)
             if acceptance:
                 accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
             timers[0] += time.clock() - start
 
             # Move odd rods now.
-            self.euler[1:-1, i] += moves[:, i] * self.evenMask
-            Ef = self.totalEnergyDensity(force)
+            self.euler[1:, i] += moves[:, i] * self.evenMask
+            Ef = self.total_energy_density(force)
             deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
 
-            reject = 1.0 * self.evenMask
+            reject = self.evenMask.copy()
             if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = 0.
+                reject[deltaE <= 0.] = False
             else:
-                utils.metropolis(reject, deltaE, even=True)
-            self.euler[1:-1,i] -= moves[:, i] * reject
-            E0 = self.totalEnergyDensity(force)
+                fast_calc.metropolis(reject, deltaE, even=True)
+            self.euler[1:, i] -= moves[:, i] * reject
+            E0 = self.total_energy_density(force)
             if acceptance:
                 accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
 
@@ -366,11 +335,16 @@ class NakedDNA:
         return E0
 
     def metropolis_update(self, force, E0, acceptance=False):
-        """ Updates dnaClass Euler angles using Metropolis algorithm.
+        u"""Updates Euler angles using the Metropolis algorithm.
 
         In contrast to metropolis_update_seq, the iteration order is random,
         i.e. we randomly pick one of even/odd and one of φ/θ/ψ and give kicks to
         the corresponding angles.
+
+        Args:
+            force (float): z component of force. Other components assumed 0.
+            E0 (Array[(L,)]): Initial energy density. This argument is mutated.
+            acceptance (bool): Whether acceptance ratios should be recorded.
 
         Returns:
             If acceptance is true, a tuple with the energy density and the acceptance
@@ -383,7 +357,7 @@ class NakedDNA:
         sigma = self.sim.kickSize
         timers = self.sim.timers
 
-        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 2, 3))
+        moves = np.random.normal(loc=0.0, scale=sigma, size=(self.L - 1, 3))
         moves[np.abs(moves) >= 5.0 * sigma] = 0.
         if acceptance:
             accepted_frac = np.zeros(3)
@@ -391,43 +365,58 @@ class NakedDNA:
         # TODO: fix acceptance computation
         def update_rods(i, even=True):
             mask = self.oddMask if even else self.evenMask
+            # opposite as "even=True" means even rods ought to be moved
+            # but the moves are applied starting from rod #1.
+            self.euler[1:, i] += moves[:, i] * mask
+            Ef = self.total_energy_density(force)
             nonlocal E0
-            self.euler[1:-1, i] += moves[:, i] * mask
-            Ef = self.totalEnergyDensity(force)
             deltaE = (Ef - E0)[:-1] + (Ef - E0)[1:]
+            # If only rod i is moved (i > 0), 5 terms will change in the energy
+            # computation: 4 due to hinges i-1 and i, and 1 due to stretching.
+            #
+            #     |         | i-1       | i       |
+            #     |---------+-----------+---------|
+            #     | twist   | changed   | changed |
+            #     | bend    | changed   | changed |
+            #     | stretch | unchanged | changed |
+            #
+            # deltaE[i-1] = Ef[i] - E0[i] + Ef[i-1] - E0[i-1]
+            # will solely affect reject[i-1] and finally euler[i].
 
-            reject = 1.0 * mask
+            reject = mask.copy()
             if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = 0.
+                reject[deltaE <= 0.] = False
             else:
-                utils.metropolis(reject, deltaE, even=(not even))
-            self.euler[1:-1, i] -= moves[:, i] * reject
-            E0 = self.totalEnergyDensity(force)
+                fast_calc.metropolis(reject, deltaE, even=(not even))
+            self.euler[1:, i] -= moves[:, i] * reject
+            E0 = self.total_energy_density(force)
             if acceptance:
                 accepted_frac[i] += 0.5 - np.count_nonzero(reject)/reject.size
 
         # We have duplication to mimic the time scale in metropolis_update_seq
         # instead of having an overall factor of two.
-        for i in np.random.randint(3, size=3):
+        for i in np.random.permutation(3):
             start = time.clock()
-            update_rods(i, even=(np.random.rand() > 0.5))
+            parity = np.random.rand() > 0.5
+            update_rods(i, even=parity)
             timers[0] += time.clock() - start
-            update_rods(i, even=(np.random.rand() > 0.5))
+            update_rods(i, even=(not parity))
+
         if acceptance:
             return E0, accepted_frac
         return E0
 
-    def totalExtension(self):
+    def total_extension(self):
         u"""Returns [Δx, Δy, Δz] given as r_bead - r_bottom."""
-        return self.d * np.sum(self.tVector(), axis=0)
+        return self.d * np.sum(self.unit_tangent_vectors(), axis=0)
 
-    def mcRelaxation(self, force, E0, mcSteps, record_final_only=True):
+    def mc_relaxation(self, force, E0, mcSteps, record_final_only=True):
         """Monte Carlo relaxation using Metropolis algorithm."""
         if record_final_only:
             for _ in range(mcSteps - 1):
                 E0 = self.metropolis_update(force, E0, acceptance=False)
             E0, acc = self.metropolis_update(force, E0, acceptance=True)
-            return E0, self.totalExtension(), acc
+            return E0, self.total_extension(), acc
         else:
             energies = np.empty((mcSteps, self.L))
             extensions = np.empty((mcSteps, 3))
@@ -437,11 +426,11 @@ class NakedDNA:
                     self.metropolis_update(force, E0, acceptance=True)
                 )
                 energies[i] = E0
-                extensions[i] = self.totalExtension()
+                extensions[i] = self.total_extension()
             return energies, extensions, acceptance_ratios
 
-    def torsionProtocol(self, force=1.96, E0=None, mcSteps=100,
-                        twists=2*np.pi, nsamples=1, includeStart=False):
+    def torsion_protocol(self, force=1.96, E0=None, twists=2*np.pi,
+                         mcSteps=100, nsamples=1, includeStart=False):
         """Simulate a torsion protocol defined by twists.
 
         The twists argument can be described in several ways:
@@ -456,16 +445,16 @@ class NakedDNA:
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = utils.partition(nsamples, mcSteps)
-        tmp_twists = utils.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        nsteps = fast_calc.partition(nsamples, mcSteps)
+        tmp_twists = fast_calc.twist_steps(self.DEFAULT_TWIST_STEP, twists)
         evol = Evolution(self, nsteps, force, twists=tmp_twists, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
-        E0 = self.totalEnergyDensity(force)
+        E0 = self.total_energy_density(force)
         for x in tmp_twists:
+            self.end[2] = x
             for nstep in nsteps:
-                self.euler[-1, 2] = x
-                E0, extension, acceptance = self.mcRelaxation(force, E0,
-                                                                  nstep)
+                E0, extension, acceptance = self.mc_relaxation(
+                    force, E0, nstep)
                 (evol.save_energy(np.sum(E0))
                  .save_extension(extension)
                  .save_acceptance(acceptance)
@@ -475,21 +464,21 @@ class NakedDNA:
         evol.save_timing(timing)
         return evol.to_dataset()
 
-    def relaxationProtocol(self, force=1.96, E0=None,
-                           mcSteps=1000, nsamples=4, includeStart=False):
-        """
-        Simulate a relaxation for an initial twist profile.
+    def relaxation_protocol(self, force=1.96, E0=None,
+                            mcSteps=1000, nsamples=4, includeStart=False):
+        """Simulate a relaxation for an initial twist profile.
 
         The DNA should be specified with the required profile already applied.
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = utils.partition(nsamples, mcSteps)
+        nsteps = fast_calc.partition(nsamples, mcSteps)
         evol = Evolution(self, nsteps, force, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
-        E0 = self.totalEnergyDensity(force)
+        E0 = self.total_energy_density(force)
         for nstep in nsteps:
-            E0, extension, acceptance = self.mcRelaxation(force, E0, nstep)
+            E0, extension, acceptance = self.mc_relaxation(
+                force, E0, nstep)
             (evol.save_energy(np.sum(E0))
              .save_extension(extension)
              .save_acceptance(acceptance)
@@ -515,9 +504,9 @@ class DisorderedNakedDNA(NakedDNA):
         self.bend_zeros = sigma_b * xi
         self.sim.squared = False
 
-    def bendingEnergyDensity(self, angles=None):
+    def bend_energy_density(self, angles=None):
         if angles is None:
-            angles = self.twistBendAngles()
+            angles = self.twist_bend_angles()
         energy_density = self.Bm / (2.0 * self.d) * (
             (angles[0] - self.bend_zeros[0]) ** 2
             + (angles[1] - self.bend_zeros[1]) ** 2
@@ -548,7 +537,7 @@ class NucleosomeArray(NakedDNA):
         self.strandLength = strandLength
         self.d = strandLength/dna_kwargs["L"]
         self.nuc = nucPos
-        self.euler[self.nuc] = utils.exitAngles([0., 0., 0.])
+        self.euler[self.nuc] = fast_calc.exitAngles([0., 0., 0.])
 
     def constants(self):
         d = NakedDNA.constants(self)
@@ -593,7 +582,7 @@ class NucleosomeArray(NakedDNA):
             prev = np.array([0., 0., 0.])
             for i in range(L):
                 if nucPos.size != 0 and i == nucPos[0]:
-                    tmp = utils.exitAngles(prev)
+                    tmp = fast_calc.exitAngles(prev)
                     dna.euler[i] = np.copy(tmp)
                     prev = tmp
                     nucPos = nucPos[1:]
@@ -604,12 +593,12 @@ class NucleosomeArray(NakedDNA):
 
         return dna
 
-    def deltaMatrices(self, Rs=None):
+    def delta_matrices(self, Rs=None):
         """Returns Δ matrices describing bends/twists between consecutive rods."""
         start = time.clock()
         timers = self.sim.timers
         if Rs is None:
-            Rs = self.rotationMatrices()
+            Rs = self.rotation_matrices()
         timers[4] += time.clock() - start
 
         start = time.clock()
@@ -622,7 +611,7 @@ class NucleosomeArray(NakedDNA):
 
         start = time.clock()
         deltas = a @ b
-        utils.calc_deltas(deltas, self.nuc, Rs)
+        fast_calc.calc_deltas(deltas, self.nuc, Rs)
         # TODO: check if avoiding recalculation for nucleosome ends is faster
         timers[7] += time.clock() - start
 
@@ -653,25 +642,25 @@ class NucleosomeArray(NakedDNA):
         return R
 
     def anglesForDummyRods(self):
-        return np.array([utils.exitAngles(self.euler[n-1]) for n in self.nuc])
+        return np.array([fast_calc.exitAngles(self.euler[n-1]) for n in self.nuc])
 
-    def relaxationProtocol(self, force=1.96, E0=None,
-                           mcSteps=1000, nsamples=4, includeStart=False,
-                           includeDummyRods=False):
+    def relaxation_protocol(self, force=1.96, E0=None,
+                            mcSteps=1000, nsamples=4, includeStart=False,
+                            includeDummyRods=False):
         """Simulate a relaxation for an initial twist profile.
 
         The DNA should be specified with the required profile already applied.
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = utils.partition(nsamples, mcSteps)
+        nsteps = fast_calc.partition(nsamples, mcSteps)
         dummyRodAngles = []
         evol = Evolution(self, nsteps, force, initial=includeStart)
         if includeStart and includeDummyRods:
             dummyRodAngles.append(self.anglesForDummyRods())
-        E0 = self.totalEnergyDensity(force)
+        E0 = self.total_energy_density(force)
         for nstep in nsteps:
-            E0, extension, acceptance = self.mcRelaxation(force, E0, nstep)
+            E0, extension, acceptance = self.mc_relaxation(force, E0, nstep)
             (evol.save_energy(np.sum(E0))
              .save_extension(extension)
              .save_acceptance(acceptance)

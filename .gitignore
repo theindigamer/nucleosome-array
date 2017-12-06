@@ -1,3 +1,5 @@
+_build/
+src/fig/
 src/__pycache__
 src/.cache
 src/.hypothesis
@@ -5,6 +7,7 @@ src/*.pyc
 src/*.json
 src/*.pckl
 src/*.nb
+src/*.nc
 *.png
 *.ipynb
 *.npy
