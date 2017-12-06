@@ -3,12 +3,14 @@ import scipy as sp
 from scipy.integrate import odeint
 import matplotlib
 import matplotlib.pylab as plt
+import matplotlib.animation as animation
+from mpl_toolkits.mplot3d import Axes3D
 import pickle
 import os
 import copy
 import datetime
 import fast_calc
-from sim_utils import AngularDescription
+import sim_utils
 
 matplotlib.rcParams.update({'font.size': 20})
 plt.rcParams['contour.negative_linestyle'] = 'solid'
@@ -26,8 +28,8 @@ class strand:
                  thetaEnd=0.0, uniformlyTwisted=False):
         # TODO: Document rd. Is it hydrodynamic radius?
         self.L = L
-        self.B = B                # in m·kT
-        self.C = C                # in m·kT
+        self.B = B                # in m·kT_room
+        self.C = C                # in m·kT_room
         self.d = SL / (1.*self.L) # in m
         self.rd = rd              # in m
         self.psiEnd = psiEnd
@@ -77,7 +79,34 @@ class strand:
 
         return J
 
-    def jacobian( self, tangent=None ):
+    def jacobianBV( self, tangent=None ):
+        """Returns the jacobian of the alpha to r transformation.
+           Shape: (L, 4, 4).
+           alpha (rows) is ordered as {delta, phi, theta, psi}.
+           r (columns) is ordered as {x,y,z,psi}.
+           * We don't have psi depend on r.
+           ** We should check with * numerically."""
+        if tangent is None: tangent=self.tangent()
+        t = tangent
+        D = np.sqrt( t[...,0]**2 + t[...,1]**2 + t[...,2]**2 )
+        p = np.sqrt( t[...,0]**2 + t[...,1]**2 + 1.E-16 )
+
+        J = np.zeros(( self.L, 4, 4 ))
+        J[..., 0, 0] = -t[:,0] / D
+        J[..., 0, 1] = -t[:,1] / D
+        J[..., 0, 2] = -t[:,2] / D
+        J[..., 1, 0] = -t[:,1] / p**2
+        J[..., 1, 1] = t[:,0] / p**2
+        J[..., 2, 0] = -t[:,0] * t[:,2] / ( p * D**2 )
+        J[..., 2, 1] = -t[:,1] * t[:,2] / ( p * D**2 )
+        J[..., 2, 2] = p / D**2
+        J[..., 3, 0] = -t[:,1] * t[:,2] / ( p**2 * D )
+        J[..., 3, 1] = t[:,0] * t[:,2] / ( p**2 * D )
+        J[..., 3, 2] = 0.0
+
+        return J
+
+    def fastJacobian( self, tangent=None ):
         """Returns the jacobian of the alpha to r transformation.
            Shape: (L, 4, 4).
            alpha (rows) is ordered as {delta, phi, theta, psi}.
@@ -87,6 +116,10 @@ class strand:
         if tangent is None:
             tangent = self.tangent_vectors()
         return fast_calc.md_jacobian(tangent)
+
+    jacobian = fastJacobian
+#    jacobian = oldJacobian
+#    jacobian = jacobianBV
 
     def removeLocalStretch( self, tangent=None ):
         """ Updates r vector to remove local stretch """
@@ -131,8 +164,8 @@ def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
     tau = torques
 
     # x = 0.0 * tau
-    # for i in range(3):
-    #     for j in range(3):
+    # for i in range(4):
+    #    for j in range(4):
     #        x[:,i] += J[:, j, i] * tau[:, j]
     x = np.einsum('...ji,...j', J, tau)
 
@@ -174,7 +207,7 @@ def project( vecA, vecB ):
     AdotB = np.einsum('...j,...j', vecA, vecB)
     vec = vecB.copy()
     for i in range(3):
-        vec[:,i] *= AdotB
+        vec[:, i] *= AdotB
     return vec
 
 def projectPerp( vecA, vecB ):
@@ -188,17 +221,21 @@ def normalize( vector, N=1.0 ):
     norm = np.linalg.norm(vector, axis=1)
     x = N * vector
     for i in range(3):
-        x[:,i] /= norm
+        x[:, i] /= norm
     return x
 
 # WORKING HERE.
-class angular(AngularDescription):
+class angular(sim_utils.AngularDescription):
     """ This class gives the angular description of the DNA strand."""
     def __init__( self, strandClass, tangent=None ):
+        temperature = sim_utils.Environment.ROOM_TEMP
         super().__init__(
-            strandClass.L, strandClass.B, strandClass.C, strandClass.d * strandClass.L,
-            euler=self.alpha( strandClass, tangent )[...,1:])
-        self.RL = self.edgeRotationMatrix( strandClass )
+            strandClass.L, strandClass.B, strandClass.C, temperature,
+            strandClass.d * strandClass.L,
+            euler=self.alpha( strandClass, tangent )[...,1:],
+            end=np.array([0., strandClass.thetaEnd, strandClass.psiEnd]))
+        self.RStart = self.startRotationMatrix( strandClass )
+        self.REnd = self.endRotationMatrix( strandClass )
 
     def alpha( self, strandClass, tangent=None ):
         """ alpha = {Delta, phi, theta, psi}."""
@@ -218,9 +255,24 @@ class angular(AngularDescription):
 
         return x
 
-    def edgeRotationMatrix( self, strandClass ):
+    def startRotationMatrix( self, strandClass ):
         """ """
-        # TODO: Explain why are there no phi terms here.
+        # Question: Why phi == psi == 0 here?
+        theta = strandClass.thetaEnd
+        R = np.zeros(( 3, 3 ))
+        R[0, 0] = 1.0
+        R[0, 1] = 0.0
+        R[1, 0] = 0.0
+        R[1, 1] = np.cos(theta)
+        R[1, 2] = np.sin(theta)
+        R[2, 0] = 0.0
+        R[2, 1] = -np.sin(theta)
+        R[2, 2] = np.cos(theta)
+        return R
+
+    def endRotationMatrix( self, strandClass ):
+        """ """
+        # Question: Why phi == 0 here?
         theta = strandClass.thetaEnd
         psi = strandClass.psiEnd
         R = np.zeros(( 3, 3 ))
@@ -267,24 +319,19 @@ class angular(AngularDescription):
         DR[..., 2, 1, 2] = sinTheta * sinPsi
         return DR
 
+    def rotationMatrices(self, *args, **kwargs):
+        return self.rotation_matrices(*args, **kwargs)
+
     def derivativeRotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
         return fast_calc.md_derivative_rotation_matrices(self.euler)
 
-    def oldEffectiveTorques( self, Rs=None, DRs=None ):
+    def effectiveTorquesAV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature. Shape (L, 4)."""
-        # Rotation matrices for the start of the L rods plus 1 at the end
-        # describing the tunable boundary condition.
-        RLp1 = np.zeros(( self.L+1, 3, 3))
         if Rs is None:
-            RLp1[:-1,...] = self.rotation_matrices()
-        else:
-            RLp1[:-1,...] = Rs
-        RLp1[-1,...] = self.RL
+            Rs = self.rotationMatrices()[:-1]
 
         if DRs is None: DRs = self.derivativeRotationMatrices()
-
-        def kronDelta(i1, i2): return (1 if i1 == i2 else 0)
 
         tau = np.zeros(( self.L, 4))
         for i in range(3):
@@ -294,83 +341,20 @@ class angular(AngularDescription):
                         c = -( self.C + 2.0*self.B ) / ( 2.0*self.d )
                     else:
                         c = -self.C / ( 2.0*self.d )
-                    tau[0, i] += c * ( RLp1[1,j,k] + kronDelta(j, k) ) * DRs[0,j,k,i]
-                    tau[1:,i] += c * ( RLp1[2:,j,k] + RLp1[:-2,j,k] ) * DRs[1:,j,k,i]
-        return np.roll( tau, 1, axis=1 )
 
-    def effectiveTorques( self, Rs=None, DRs=None ):
+                    tau[0, i] += c * ( self.RStart[j,k] + Rs[1,j,k] ) * DRs[0,j,k,i]
+                    tau[-1,i] += c * ( Rs[-2,j,k] + self.REnd[j,k] ) * DRs[-1,j,k,i]
+                    tau[1:-1,i] += c * ( Rs[:-2,j,k] + Rs[2:,j,k] ) * DRs[1:-1,j,k,i]
+        return np.roll( tau, 1, axis=1 ) #THis rolling here is ugly. I should fix this sometime.
+
+    effectiveTorques = effectiveTorquesAV
+
+    def effectiveTorquesBV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""
-        # Rotation matrices for the start of the L rods plus 1 at the end
-        # describing the tunable boundary condition.
-        RLp1 = np.zeros((self.L + 1, 3, 3))
         if Rs is None:
-            RLp1[:-1,...] = self.rotation_matrices()
-        else:
-            RLp1[:-1,...] = Rs
-        RLp1[-1,...] = self.RL
+            Rs = self.rotationMatrices()
 
         if DRs is None: DRs = self.derivativeRotationMatrices()
 
         return fast_calc.md_effective_torques(
-            RLp1, DRs, self.L, self.C, self.B, self.d)
-
-    def deltaMatrices( self, Rs=None ):
-        """ Returns delta matrices. """
-        # TODO: Explain why the first dimension has size L + 1 instead of L.
-        # There are L rods, so I think there should be L - 1 delta matrices.
-        RLp1 = np.zeros(( self.L+1, 3, 3))
-        if Rs is None:
-            RLp1[:-1,...] = self.rotation_matrices()
-        else:
-            RLp1[:-1,...] = Rs
-        RLp1[-1,...] = self.RL
-
-        a = np.swapaxes( RLp1[:-1], 1, 2 )
-        b = RLp1[1:]
-        return a @ b
-
-    def stretch_energy_density(self, force, tangents=None):
-        """Computes stretching energy for all but the last rod.
-
-        Computes -F·t_i for i in [0, ..., L-1).
-
-        Args:
-            force (Array[(3,)]): x, y, z components of applied force in Newtons.
-            tangents (Array[(L, 3)]): tangent vectors for each rod in m.
-
-        Returns:
-            energy_density (Array[(L-1,)]) in Joules.
-
-        Note:
-            Overrides base class method parameters. Does not require an
-            explicit temperature value but all components of force are required.
-        """
-        if tangents is None:
-            tangents = self.tangent_vectors()
-        energy_density = np.einsum('i,...i', -force, tangents[:-1])
-        return energy_density
-
-    def total_energy_density(self, force, tangents=None):
-        """Computes total energy for each rod.
-
-        The energy has three pieces:
-
-            E_tot = E_bend + E_twist + E_stretch
-
-        Args:
-            force (Array[(3,)]): x, y, z components of applied force in Newtons.
-            tangents (Array[(L, 3)]): tangent vectors for each rod in m.
-
-        Returns:
-            energy_density (Array[(L-1,)]) in units of Joules.
-
-        Note:
-            1. Caller should ensure that B / d and C / d are in Joules.
-            2. Overrides base class method parameters. Does not require an explicit
-               temperature value but all components of force are required.
-        """
-        energy_density, twist_bends = self.bend_energy_density()
-        energy_density += self.twist_energy_density(twist_bends=twist_bends)[0]
-        energy_density += self.stretch_energy_density(
-            force, tangents=tangents)
-        return energy_density
+            self.RStart, Rs, self.REnd, DRs, self.L, self.C, self.B, self.d)

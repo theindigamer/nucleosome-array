@@ -327,7 +327,7 @@ def twist_bend_angles(Deltas, squared):
 
     Args:
         Deltas (Array[(L, 3, 3)]):
-            Matrices describing relative twist between consecutive rods.
+            Matrices describing relative twists and bends at hinges.
         squared (bool): Returns
 
     Returns:
@@ -642,19 +642,18 @@ def md_derivative_rotation_matrices(euler):
     return DR
 
 @jit(cache=True, nopython=True)
-def md_effective_torques(RLp1, DRs, L, C, B, d):
+def md_effective_torques(RStart, Rs, REnd, DRs, L, C, B, d):
     tau = np.zeros((L, 4))
     c1 = - (C + 2. * B) / (2. * d)
     c2 = - C / (2. * d)
     for i in range(3):
         for j in range(3):
             for k in range(3):
-                if k==2:
-                    c = c1
-                else:
-                    c = c2
-                delta_jk = 1. if j == k else 0.
-                tau[0, i + 1] += c * (RLp1[1, j, k] + delta_jk) * DRs[0, j, k, i]
-                tau[1:, i + 1] += (c * (RLp1[2:, j, k] + RLp1[:-2, j, k])
-                                   * DRs[1:, j, k, i])
+                c = c1 if k == 2 else c2
+                tau[0, i + 1] += (c * (RStart[j, k] + Rs[1, j, k])
+                                  * DRs[0, j, k, i])
+                tau[-1, i + 1] += (c * (Rs[-2, j, k] + REnd[j, k])
+                                   * DRs[-1, j, k, i])
+                tau[1:-1, i + 1] += (c * (Rs[:-2, j, k] + RLp1[2:, j, k])
+                                     * DRs[1:-1, j, k, i])
     return tau

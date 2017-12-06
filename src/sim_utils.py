@@ -36,9 +36,17 @@ class AngularDescription:
             end (Array[(3,)]): Euler angles at the end of the final rod.
 
         Note:
-            B and C should be specified in units of z·kT where T is the
+            If B and C are specified in units of z·kT where T is the
             simulation temperature, and z is the unit used for the strand length
-            (usually nm).
+            (usually nm), the force, should be specified in pN.
+
+            If B and C are specified in some other units, for example, if
+            B/strand_len is in Joules, then you should write a custom
+            stretch_energy_density function which appropriately adjusts the
+            prefactor for force computation.
+
+            The key point is to make sure that all the functions in the
+            total_energy_density functions have the same units.
         """
         self.L = L
         self.B = B
@@ -176,13 +184,12 @@ class AngularDescription:
 
         Returns:
             energy_density (Array[(L,)]) in units of kT.
-            otherwise.
         """
         T = max(self.env.T, Environment.MIN_TEMP)
         prefactor = 1.0 / (1.38E-2 * T)
         if tangents is None:
             tangents = self.tangent_vectors()
-        return -prefactor * np.einsum('i,ji->j', force, tangents)
+        return prefactor * np.einsum('i,ji->j', -force, tangents)
 
     def stretch_energy(self, *args, **kwargs):
         return self._total(self.stretch_energy_density, *args, **kwargs)
@@ -208,8 +215,7 @@ class AngularDescription:
         energy_density, twist_bends = self.bend_energy_density()
         # discard the second element as twist_bends was computed already
         energy_density += self.twist_energy_density(twist_bends=twist_bends)[0]
-        energy_density += self.stretch_energy_density(
-            force, tangents=tangents)
+        energy_density += self.stretch_energy_density(force, tangents=tangents)
         return energy_density
 
     def total_energy(self, *args, **kwargs):
