@@ -54,3 +54,26 @@ by torsional manipulation
 
 [F] Forth et al. - Abrupt Buckling Transition Observed during the Plectoneme
 Formation of Individual DNA Molecules
+
+## Boundary conditions
+
+The internal representation of the angles works with hinges, not rods.
+However, it is easier to think of numbering in terms of rods.
+We have `L` rods between the base and the bead,
+so the angles are indexed `[0, .., L-1]`.
+We have two additional sets of angles `start` (`s`) and `end` (`e`).
+These are held fixed when the DNA relaxes.
+Typically we would want `φ_s = φ_e`, `θ_s = θ_e`, and `ψ_s = 0`.
+
+* The `0`-th element represents the point where the DNA attaches to the base.
+* The `L-1`-th element represents the "bottom" of the last rod attached to the bead.
+* The `start` element represents the "bottom" of a rod embedded in the base,
+  so that we can account for the bending energy between `start` and `0`.
+* The `end` element represent the point where the DNA attaches to the bead.
+  So if we want to twist the DNA, we can change `ψ_e`.
+
+The `0`-th rod is only free to bend, but not to twist.
+So `ψ_0 = ψ_s` whereas `φ_0` and `θ_0` evolve with time.
+
+The `L-1`-th rod is only free to twist, but not to bend.
+So `φ_{L-1} = φ_e` and `θ_{L-1} = θ_e` whereas `ψ_{L-1}` evolves with time.
