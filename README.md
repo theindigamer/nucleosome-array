@@ -42,6 +42,15 @@ Tests can be run by `cd`-ing into `src` and running `pytest`.
 [conda]: https://github.com/conda/conda
 [nbstripout]: https://github.com/kynan/nbstripout
 
+### A warning w.r.t. Numba
+
+Unlike `numpy`, which has bounds checking on by default,
+`numba` doesn't offer bounds checking as of version 0.36,
+although negative indices do work as expected.
+So whenever you are tweaking `numba`-related code,
+it might be best to first comment out the `@jit` decorator(s),
+make sure the changes work as expected, and then de-comment it.
+
 ## Bibliography
 
 The source code comments sometimes refer to papers for values etc.
@@ -77,3 +86,25 @@ So `ψ_0 = ψ_s` whereas `φ_0` and `θ_0` evolve with time.
 
 The `L-1`-th rod is only free to twist, but not to bend.
 So `φ_{L-1} = φ_e` and `θ_{L-1} = θ_e` whereas `ψ_{L-1}` evolves with time.
+
+If we look at the energies, there are `L+1` bending/twisting energy terms,
+one for each hinge (numbered `0 ↔ start~0`, `1 ↔ 0~1`, ..., `L ↔ L-1~end`).
+However, there are `L` stretching energy terms, one for each rod.
+
+For a given angle, only `L-1` terms can be changed in `euler`, which will affect
+`L` out of the `L+1` possible terms. This is tabulated below:
+
+```
+| Angle changed | E_bend   | E_twist  | E_stretch |
+|---------------|----------|----------|-----------|
+| φ_0           | 0, 1     | 0, 1     | -         |
+| θ_0           | 0, 1     | 0, 1     | 0         |
+| ψ_1           | -        | 1, 2     | -         |
+| φ_1           | 1, 2     | 1, 2     | -         |
+| θ_1           | 1, 2     | 1, 2     | 1         |
+| ψ_2           | -        | 1, 2     | -         |
+| ...           | ...      | ...      | ...       |
+| φ_{L-2}       | L-2, L-1 | L-2, L-1 | -         |
+| θ_{L-2}       | L-2, L-1 | L-2, L-1 | L-2       |
+| ψ_{L-1}       | -        | L-1, L   | -         |
+```

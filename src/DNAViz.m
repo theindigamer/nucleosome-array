@@ -157,14 +157,14 @@ nucleosomeEnd[a_,tscale_,dummyRod_:{},tubeRadius_:dnaRadiusVal] :=
     |>
   ];
 
-nucleosomeArrayGraphic[rodLength_, strandAngles_, nucleosomes_
+nucleosomeArrayGraphic[rodLength_, strandAngles_, endAngle_, nucleosomes_
                             , fakeRodAngles_:{}, tubeRadius_:dnaRadiusVal]:=
 Module[{
   tscale, nscale, tangents, normals, tmpFakeRodAngles
   , data, coords
-  , sowCoords, sowGraphics, foldf
+  , sowCoords, sowGraphics, linkerSegment
   , arrows, tubes
-  , normalArrows, mainStrand
+  , normalArrows, endArrow, mainStrand
 },
 
   tscale = 10 rodLength; (* 10 because drawing is in \[Angstrom] whereas given values are in nm *)
@@ -180,7 +180,8 @@ Module[{
   *)
   sowCoords[strandCoords_] := (Sow[strandCoords,"c"]; strandCoords[[-1]]);
   sowGraphics[superHelix_] := (Sow[superHelix[["graphics"]],"g"]; superHelix[["helixEndCoordinate"]]);
-  foldf[acc_,{strandTangents_,strandNormals_,dummyRod_}] :=
+  linkerSegment[acc_,{strandTangents_,strandNormals_,dummyRod_}] :=
+    (* We should draw a nucleosome if and only if startCoord doesn't match the attachment base. *)
     Module[{strandStart = If[acc[["startCoord"]]=={0,0,0}, {0,0,0},
                               sowGraphics@nucleosomeEnd[acc,tscale,dummyRod,tubeRadius]]},
       <|
@@ -190,19 +191,25 @@ Module[{
     ];
   data = #1->{##2}&@@@
     Reap[
+      (* First save the keys for making the rules later. *)
       Sow["graphics","g"];
       Sow["coords","c"];
-      FoldList[foldf, <|"startCoord"->{0,0,0}|>
+      (* Each operation of the fold builds segments of linker DNA *)
+      FoldList[linkerSegment, <|"startCoord"->{0,0,0}|>
                , Transpose[{tangents,normals,tmpFakeRodAngles}]]
    ][[2]];
   tubes[xs_] := Graphics3D@{Tube[#,tubeRadius]&/@xs};
   arrows[xs_, color_:Black] :=
     Graphics3D@{Thickness[Large], Arrowheads[0.01], color, (Arrow(*@*Tube*))/@xs};
+  (* TODO: Explain why the last element is excluded. *)
   normalArrows = arrows@*Transpose/@MapThread[{#1[[;;-2]],#1[[;;-2]]+#2}&,{"coords"/.data,normals}];
+  (* The last coordinate of the last linker is attached to the bead. *)
+  endArrow = arrows[{{#,#+nscale*normalVector[endAngle]}}&[("coords"/.data)[[-1, -1]]]
+      , Blue];
   (* last coordinate should be excluded with \[LeftDoubleBracket];;-2\[RightDoubleBracket] as there are k normals for k+1 rods *)
   mainStrand = tubes["coords"/.data];
 
-  Flatten[{"graphics"/.data, normalArrows, mainStrand}]
+  Flatten[{"graphics"/.data, normalArrows, mainStrand, endArrow}]
 ]
 
 EndPackage[]

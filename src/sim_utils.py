@@ -23,7 +23,7 @@ class AngularDescription:
     some functions to record timings for individual computations.
     """
 
-    def __init__(self, L, B, C, T, strand_len, euler=None, end=None):
+    def __init__(self, L, B, C, T, strand_len, euler=None, start=None, end=None):
         u"""Initialize the angular description of a strand.
 
         Args:
@@ -33,6 +33,7 @@ class AngularDescription:
             T (float): temperature in Kelvin
             strand_len (float): total length of strand
             euler (Array[(L, 3)]): Euler angles for all the rods.
+            start (Array[(3,)]): Euler angles at the start of the (-1)-th rod.
             end (Array[(3,)]): Euler angles at the end of the final rod.
 
         Note:
@@ -54,35 +55,41 @@ class AngularDescription:
         self.env = Environment(T=T)
         self.strand_len = strand_len
         self.d = strand_len / L
-        if euler is None:
-            self.euler = np.zeros((self.L, 3))
-        else:
-            if np.shape(euler) != (L, 3):
-                raise ValueError("Unexpected shape.")
-            self.euler = euler
-        if end is None:
-            self.end = np.zeros(3)
-        else:
-            if np.shape(end) != (3,):
-                raise ValueError("Unexpected shape.")
-            self.end = end
+
+        def check_shape_and_save(attr_name, x, default):
+            nonlocal self
+            if x is None:
+                setattr(self, attr_name, default)
+            else:
+                x_shape = np.shape(x)
+                def_shape = np.shape(default)
+                if x_shape != def_shape:
+                    raise ValueError("Unexpected shape. Supplied shape is {0},"
+                                     " whereas shape {1} was expected.",
+                                     x_shape, def_shape)
+                else:
+                    setattr(self, attr_name, x)
+
+        check_shape_and_save("euler", euler, np.zeros((self.L, 3)))
+        check_shape_and_save("start", start, np.zeros(3))
+        check_shape_and_save("end", end, np.zeros(3))
 
     def rotation_matrices(self):
         """Rotation matrices along the DNA string.
 
         Returns:
-            Rotation matrices all rod ends, in an array of shape (L+1, 3, 3).
+            Rotation matrices for start + euler + end (L+2, 3, 3).
         """
-        return fast_calc.rotation_matrices(self.euler, self.end)
+        return fast_calc.rotation_matrices(self.start, self.euler, self.end)
 
     def delta_matrices(self, Rs=None):
         u"""Returns Δ matrices describing bends and twists for each hinge.
 
         Args:
-            Rs (Array[(L+1, 3, 3)]): Rotation matrices to use.
+            Rs (Array[(L+2, 3, 3)]): Rotation matrices to use.
 
         Returns:
-            Array of Δ_i = R_i^T · R_{i+1} in an array of shape (L, 3, 3).
+            Array of Δ_i = R_i^T · R_{i+1} in an array of shape (L+1, 3, 3).
         """
         if Rs is None:
             Rs = self.rotation_matrices()
@@ -94,10 +101,10 @@ class AngularDescription:
         u"""Computes the twist and bend angles.
 
         Args:
-            Deltas (Array[(L, 3, 3)]): Delta matrices to use.
+            Deltas (Array[(L+1, 3, 3)]): Delta matrices to use.
 
         Returns:
-            (β², β², Γ²), each an array of shape (L,).
+            (β², β², Γ²), each an array of shape (L+1,).
         """
         if Deltas is None:
             Deltas = self.delta_matrices()
@@ -115,12 +122,12 @@ class AngularDescription:
         """Computes bending energy at each hinge.
 
         Args:
-            twist_bends (Tuple[(3,); Array[(L,)]]):
+            twist_bends (Tuple[(3,); Array[(L+1,)]]):
                 (β², _, _) (output of ``twist_bend_angles()``).
 
         Returns:
             A two element tuple with bending energy for each hinge
-            (Array[(L,)]) and twist_bends. The energy_density is in units of
+            (Array[(L+1,)]) and twist_bends. The energy_density is in units of
             B / d.
         """
         if twist_bends is None:
@@ -135,12 +142,12 @@ class AngularDescription:
         """Computes twisting energy at each hinge.
 
         Args:
-            twist_bends (Tuple[(3,); Array[(L,)]]):
+            twist_bends (Tuple[(3,); Array[(L+1,)]]):
                 (_, _, Γ²) (output of ``twist_bend_angles()``).
 
         Returns:
             A two element tuple with twisting energy for each hinge
-            (Array[(L,)]) and twist_bends. The energy density is in units of
+            (Array[(L+1,)]) and twist_bends. The energy density is in units of
             C / d.
         """
         if twist_bends is None:
@@ -173,7 +180,7 @@ class AngularDescription:
         return np.cumsum(tangents, axis=0)
 
     def stretch_energy_density(self, force, tangents=None):
-        u"""Computes stretching energy for all but the last rod.
+        u"""Computes stretching energy for all L rods.
 
         Computes -F·t_i/(k·T) for i in [0, ..., L-1], using
         k = 1.38E-2 pN·nm/K.
@@ -194,6 +201,41 @@ class AngularDescription:
     def stretch_energy(self, *args, **kwargs):
         return self._total(self.stretch_energy_density, *args, **kwargs)
 
+    def all_energy_densities(self, force=None, tangents=None,
+                             include=(True, True, True)):
+        """Computes all the energy densities and returns them separately.
+
+        Args:
+            force (Array[(3,)]): applied force (vector) in pN.
+            tangents (Array[(L, 3)]): tangent vectors for each rod in nm.
+            include (List[(3,)]): If bend/twist/stretch energy density should
+            be computed.
+
+        Returns:
+            Energy densities in a tuple (bend, twist, stretch).
+            If include[i] is set to False, the i-th tuple element is None.
+            See the corresponding energy density functions for shapes.
+
+        Note:
+            You must supply a force value if the last element of include is
+            set to True; it cannot be automatically inferred.
+        """
+        bend_include, twist_include, stretch_include = include
+        twist_bends = None
+        if bend_include:
+            bend_ed, twist_bends = self.bend_energy_density()
+        else:
+            bend_ed = None
+        if twist_include:
+            twist_ed, _ = self.twist_energy_density(twist_bends=twist_bends)
+        else:
+            twist_ed = None
+        if stretch_include:
+            stretch_ed = self.stretch_energy_density(force, tangents=tangents)
+        else:
+            stretch_ed = None
+        return (bend_ed, twist_ed, stretch_ed)
+
     def total_energy_density(self, force, tangents=None):
         """Computes total energy for each rod.
 
@@ -201,13 +243,19 @@ class AngularDescription:
 
             E_tot = E_bend + E_twist + E_stretch
 
+        This function is only provided as sugar for total_energy.
+        DO NOT CALL IT DIRECTLY for dynamics,
+        as there is a mix of indexing - rods and hinges -
+        due to unequal sizes of the stretch and bend/twist energies densities.
+        Use the individual energy density functions, or ``all_energy_densities``
+        instead.
+
         Args:
             force (Array[(3,)]): applied force in pN.
-            T (float): temperature in K.
             tangents (Array[(L, 3)]): tangent vectors for each rod in nm.
 
         Returns:
-            energy_density (Array[(L,)]) in units of kT.
+            energy_density (Array[(L+1,)]) in units of kT.
 
         Note:
             Caller should ensure that B/d and C/d are in units of kT.
@@ -215,7 +263,9 @@ class AngularDescription:
         energy_density, twist_bends = self.bend_energy_density()
         # discard the second element as twist_bends was computed already
         energy_density += self.twist_energy_density(twist_bends=twist_bends)[0]
-        energy_density += self.stretch_energy_density(force, tangents=tangents)
+        # skip last element due to extra length
+        energy_density[:-1] += self.stretch_energy_density(
+            force, tangents=tangents)
         return energy_density
 
     def total_energy(self, *args, **kwargs):

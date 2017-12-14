@@ -326,14 +326,14 @@ def twist_bend_angles(Deltas, squared):
     u"""Computes twist and bend values for an array of Delta matrices.
 
     Args:
-        Deltas (Array[(L, 3, 3)]):
+        Deltas (Array[(X, 3, 3)]):
             Matrices describing relative twists and bends at hinges.
         squared (bool): Returns
 
     Returns:
         (β², β², Γ²) if squared is true.
         (β₁, β₂, Γ) if squared is false.
-        Individual terms are arrays of shape (L,).
+        Individual terms are arrays of shape (X,).
 
     Note:
         See [DS, Appendix D] for equations.
@@ -364,6 +364,18 @@ def twist_bend_angles(Deltas, squared):
 
 @jit(cache=True, nopython=True)
 def set_rotation_matrix(angles, res):
+    u"""Computes a single rotation matrix.
+
+    Args:
+        angles (Array[(3,)]): Euler angles [φ, θ, ψ].
+        res (Array[(3, 3)]): result array to save rotation matrix.
+
+    Returns:
+        None. res is mutated in-place.
+
+    Note:
+        Represents [DS, Eqn. (B1, B2)].
+    """
     phi = angles[0]
     cos_phi = np.cos(phi)
     sin_phi = np.sin(phi)
@@ -387,24 +399,26 @@ def set_rotation_matrix(angles, res):
     res[2, 2] = cos_theta
 
 @jit(cache=True, nopython=True)
-def rotation_matrices(euler, end):
+def rotation_matrices(start, euler, end):
     u"""Computes rotation matrices element-wise.
 
     Args:
+        start (Array[(3,)]): Euler angles for (-1)-th point, ordered [φ, θ, ψ].
         euler (Array[(L, 3)]): Euler angles for rods, ordered [φ, θ, ψ].
         end (Array[(3,)]): Euler angles for last point, ordered [φ, θ, ψ].
 
     Returns:
-        Passive rotation matrices in an array of shape (L+1, 3, 3).
+        Passive rotation matrices in an array of shape (L+2, 3, 3).
 
     Note:
         Represents [DS, Eqn. (B1, B2)].
     """
     n = len(euler)
-    R = np.empty((n + 1, 3, 3))
+    R = np.empty((n + 2, 3, 3))
+    set_rotation_matrix(start, R[0])
     for i in range(n):
-        set_rotation_matrix(euler[i], R[i])
-    set_rotation_matrix(end, R[n])
+        set_rotation_matrix(euler[i], R[i + 1])
+    set_rotation_matrix(end, R[n + 1])
     return R
 
 def partition(n_parts, total):
