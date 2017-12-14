@@ -40,6 +40,12 @@ class strand:
         if uniformlyTwisted:
             self.r[:,3] = self.psiEnd * np.arange( self.L ) / self.L
 
+    def start(self):
+        return np.array([0., self.thetaEnd, 0.])
+
+    def end(self):
+        return np.array([0., self.thetaEnd, self.psiEnd])
+
     def tangent_vectors(self):
         """Tangent vectors for each rod (Array[(L, 3)]) scaled with rod length.
 
@@ -235,9 +241,11 @@ class angular(sim_utils.AngularDescription):
             strandClass.L, strandClass.B, strandClass.C, temperature,
             strandClass.d * strandClass.L,
             euler=self.alpha( strandClass, tangent )[...,1:],
-            end=np.array([0., strandClass.thetaEnd, strandClass.psiEnd]))
-        self.RStart = self.startRotationMatrix( strandClass )
-        self.REnd = self.endRotationMatrix( strandClass )
+            start=strandClass.start(),
+            end=strandClass.end()
+        )
+        self.RStart = fast_calc.rotation_matrix(self.start)
+        self.REnd = fast_calc.rotation_matrix(self.end)
 
     def alpha( self, strandClass, tangent=None ):
         """ alpha = {Delta, phi, theta, psi}."""
@@ -254,39 +262,7 @@ class angular(sim_utils.AngularDescription):
         x[:, 1] = np.arctan2(t[:, 0], t[:, 1])
         x[:, 2] = np.arccos(t[:, 2] / t_norm)
         x[:, 3] = r[:, 3]
-
         return x
-
-    def startRotationMatrix( self, strandClass ):
-        """ """
-        # Question: Why phi == psi == 0 here?
-        theta = strandClass.thetaEnd
-        R = np.zeros(( 3, 3 ))
-        R[0, 0] = 1.0
-        R[0, 1] = 0.0
-        R[1, 0] = 0.0
-        R[1, 1] = np.cos(theta)
-        R[1, 2] = np.sin(theta)
-        R[2, 0] = 0.0
-        R[2, 1] = -np.sin(theta)
-        R[2, 2] = np.cos(theta)
-        return R
-
-    def endRotationMatrix( self, strandClass ):
-        """ """
-        # Question: Why phi == 0 here?
-        theta = strandClass.thetaEnd
-        psi = strandClass.psiEnd
-        R = np.zeros(( 3, 3 ))
-        R[0, 0] = np.cos(psi)
-        R[0, 1] = np.sin(psi)
-        R[1, 0] = -np.cos(theta) * np.sin(psi)
-        R[1, 1] = np.cos(theta) * np.cos(psi)
-        R[1, 2] = np.sin(theta)
-        R[2, 0] = np.sin(theta) * np.sin(psi)
-        R[2, 1] = -np.sin(theta) * np.cos(psi)
-        R[2, 2] = np.cos(theta)
-        return R
 
     def oldDerivativeRotationMatrices( self ):
         """ Returns rotation matrices along the DNA string"""
@@ -322,6 +298,7 @@ class angular(sim_utils.AngularDescription):
         return DR
 
     def rotationMatrices(self, *args, **kwargs):
+        """Rotation matrices, shape (L+2, 3, 3)."""
         return self.rotation_matrices(*args, **kwargs)
 
     def derivativeRotationMatrices( self ):
@@ -331,7 +308,7 @@ class angular(sim_utils.AngularDescription):
     def effectiveTorquesAV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature. Shape (L, 4)."""
         if Rs is None:
-            Rs = self.rotationMatrices()[:-1]
+            Rs = self.rotationMatrices()[1:-1]
 
         if DRs is None: DRs = self.derivativeRotationMatrices()
 
@@ -354,7 +331,7 @@ class angular(sim_utils.AngularDescription):
     def effectiveTorquesBV( self, Rs=None, DRs=None ):
         """ Returns the effective torques per temperature."""
         if Rs is None:
-            Rs = self.rotationMatrices()
+            Rs = self.rotationMatrices()[1:-1]
 
         if DRs is None: DRs = self.derivativeRotationMatrices()
 

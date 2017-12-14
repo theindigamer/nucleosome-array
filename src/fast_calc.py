@@ -363,6 +363,24 @@ def twist_bend_angles(Deltas, squared):
 
 
 @jit(cache=True, nopython=True)
+def rotation_matrix(angles):
+    u"""Computes a single rotation matrix.
+
+    Args:
+        angles (Array[(3,)]): Euler angles [φ, θ, ψ].
+
+    Returns:
+        A 3x3 rotation matrix
+
+    Note:
+        Represents [DS, Eqn. (B1, B2)].
+    """
+    tmp = np.empty((3,3))
+    set_rotation_matrix(angles, tmp)
+    return tmp
+
+
+@jit(cache=True, nopython=True)
 def set_rotation_matrix(angles, res):
     u"""Computes a single rotation matrix.
 
