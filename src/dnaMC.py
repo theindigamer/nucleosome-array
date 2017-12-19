@@ -65,7 +65,6 @@ class Evolution:
             tsteps = np.insert(tsteps, 0, 0)
         self.data = dna.constants()
         self.data.update({
-            # TODO: Check if None can be saved in a netcdf file.
             "twists": twists,
             "tsteps": tsteps,
             "angles": np.empty((tsteps.size, dna.L, 3)),
@@ -112,6 +111,7 @@ class Evolution:
         return self.data
 
     def to_dataset(self):
+        # FIXME: None and boolean values cannot be saved in netcdf format.
         data = self.data
         timing_keys, timing = list(zip(*data["timing"].items()))
         timing_keys = list(timing_keys)
@@ -171,9 +171,9 @@ class NakedDNA(AngularDescription):
         """
         super().__init__(
             L, B, C, T, strand_len, euler=np.zeros((L, 3)), end=np.zeros(3))
-        if T < 273 and B == 43.0 and C == 89.0:
+        if T < 273 and (B == 43.0 or C == 89.0):
             print("WARNING: You are using a low temperature but haven't changed"
-                  " either B or C.")
+                  " both B and C.")
         self.Pinv = 0 # no intrinsic disorder
         self.Bm = B   # dummy value, kept for consistency with disordered DNA.
         self.sim = Simulation(kickSize=kickSize)
@@ -482,7 +482,7 @@ class NucleosomeArray(NakedDNA):
         """Initializes a nucleosome array in one of the predefined styles.
 
         ``nucArrayType`` takes the values:
-        * 'standard' -> nucleosomes arranged roughly vertically
+        * 'vertical' -> nucleosomes arranged roughly vertically
         * 'relaxed'  -> initial twists and bends between rods are zero
         ``linker`` and ``spacer`` are specified in base pairs.
         """
@@ -508,7 +508,7 @@ class NucleosomeArray(NakedDNA):
         dna = NucleosomeArray(L=L, nucPos=nucPos,
                               strandLength=strandLength, kickSize=kickSize)
 
-        if nucArrayType == "standard":
+        if nucArrayType == "vertical":
             pass
         elif nucArrayType == "relaxed":
             prev = np.array([0., 0., 0.])
@@ -521,7 +521,7 @@ class NucleosomeArray(NakedDNA):
                 else:
                     dna.euler[i] = np.copy(prev)
         else:
-            raise ValueError("nucArrayType should be either 'standard' or 'relaxed'.")
+            raise ValueError("nucArrayType should be either 'vertical' or 'relaxed'.")
 
         return dna
 

@@ -2,7 +2,7 @@ import chromatinMD as cmd
 import numpy as np
 import fast_calc
 import hypothesis.extra.numpy as hnp
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis.strategies import floats, composite
 
 FINITE_FLOATS = floats(allow_nan=False, allow_infinity=False)
@@ -39,6 +39,7 @@ def _angular(draw):
 
 
 @given(_array())
+@settings(deadline=2000)
 def test_eulerMatrix(f):
     """Checks that eulerMatrixOfAngles and anglesOfEulerMatrix are inverses."""
     # We compare the rotation matrices and not the angles because several
@@ -52,24 +53,42 @@ def test_eulerMatrix(f):
 
 
 @given(_angular())
+@settings(deadline=2000)
 def test_derivative_rotation_matrices(ang):
     m1 = ang.derivativeRotationMatrices()
     m2 = ang.oldDerivativeRotationMatrices()
     assert np.allclose(m1, m2, atol=1.E-16)
 
 
-@given(_strand_r())
-def test_jacobian(f):
-    s = cmd.strand()
-    s.r[:] = f(s.L)
-    t = s.tangent_vectors()
-    m1 = s.jacobian(tangent=t)
-    m2 = s.oldJacobian(tangent=t)
-    assert np.allclose(m1, m2, atol=1.E-12)
+# FIXME: Update this test
+# @given(_strand_r())
+# def test_jacobian(f):
+#     s = cmd.strand()
+#     s.r[:] = f(s.L)
+#     t = s.tangent_vectors()
+#     m1 = s.jacobian(tangent=t)
+#     m2 = s.oldJacobian(tangent=t)
+#     assert np.allclose(m1, m2, atol=1.E-12)
+
+# FIXME: Update this test
+# @given(_angular())
+# def test_effective_torques(ang):
+#     tau1 = ang.oldEffectiveTorques()
+#     tau2 = ang.effectiveTorques()
+#     assert np.allclose(tau1, tau2, atol=1.E-16)
 
 
-@given(_angular())
-def test_effective_torques(ang):
-    tau1 = ang.oldEffectiveTorques()
-    tau2 = ang.effectiveTorques()
-    assert np.allclose(tau1, tau2, atol=1.E-16)
+@given(floats(allow_nan=False, allow_infinity=False))
+def test_metropolis(E):
+    size = 10000
+    acceptance_expect = np.exp(-E) if E > 0 else 1.
+    sigma = 1. / np.sqrt(size) if E > 0 else 1E-16
+    deltaE = np.repeat(E, size)
+    rej_even = np.repeat(True, size)
+    rej_odd = rej_even.copy()
+    fast_calc.metropolis(rej_even, deltaE, even=True)
+    fast_calc.metropolis(rej_odd, deltaE, even=False)
+    acceptance_even = 1. - np.count_nonzero(rej_even[0::2]) / (size / 2)
+    acceptance_odd = 1. - np.count_nonzero(rej_odd[1::2]) / (size / 2)
+    assert np.abs(acceptance_even - acceptance_expect) < 3 * sigma
+    assert np.abs(acceptance_odd - acceptance_expect) < 3 * sigma

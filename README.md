@@ -92,7 +92,7 @@ one for each hinge (numbered `0 ↔ start~0`, `1 ↔ 0~1`, ..., `L ↔ L-1~end`)
 However, there are `L` stretching energy terms, one for each rod.
 
 For a given angle, only `L-1` terms can be changed in `euler`, which will affect
-`L` out of the `L+1` possible terms. This is tabulated below:
+`L` out of the `L+1` possible terms. This is tabulated below using hinge numbers:
 
 ```
 | Angle changed | E_bend   | E_twist  | E_stretch |
