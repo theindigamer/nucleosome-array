@@ -1,10 +1,12 @@
 import numpy as np
 import scipy as sp
 from scipy.integrate import odeint
+from tqdm import tqdm
 import matplotlib
 import matplotlib.pylab as plt
 import matplotlib.animation as animation
 from mpl_toolkits.mplot3d import Axes3D
+import sys
 import pickle
 import os
 import copy
@@ -26,12 +28,11 @@ class strand:
         The principal class attribute is the strand r vector: r = {x,y,z,psi}."""
     def __init__(self, L=128, B=43.E-9, C=89.E-9, SL=740.E-9, rd=1.2E-9, psiEnd=0.0,
                  thetaEnd=0.0, uniformlyTwisted=False):
-        # TODO: Document rd. Is it hydrodynamic radius?
         self.L = L
         self.B = B                # in m·kT_room
         self.C = C                # in m·kT_room
         self.d = SL / self.L      # in m
-        self.rd = rd              # in m
+        self.rd = rd              # hydrodynamic radius in m
         self.psiEnd = psiEnd
         self.thetaEnd = thetaEnd
         self.r = np.zeros(( self.L, 4 ))
@@ -127,65 +128,84 @@ class strand:
         t = normalize( tangent, self.d )
         self.r[1:, :3] = np.cumsum( t, axis=0 )[:-1]
 
-def parameters( strandClass, eta=9.22E-4 , T=293.15 ):
-    """ Returns cR and cPsi parameters. (See notes) """
-    k_B = 1.38E-23
-    zeta = 2. * np.pi * eta / np.log( strandClass.B / strandClass.rd )
-    lamb = 2. * np.pi * eta * strandClass.rd**2
+def rDot( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
+            tangent=None, jacobian=None, torques=None ):
+    """ Returns dr / dt at zero temperature.
+        Shape: (L, 4).
+        Evolves [r_1, ..., r_L-1] components of r. r_0 doesn't move.
+        Enter r in one-dimensional shape: (4 L,)
+        [0,0,0,0,x1, y1, z1, psi1, ..., x_{L-1}, y_{L-1}, z_{L-1}, psi_{L-1}]
+        inextensible is true if the strand does not stretch locally.
+        Use .reshape((L,4)) in the result to have it in (L,4) shape."""
+    sc = strandClass
+    sc.r = r.reshape(( sc.L, 4 ))
 
-    return k_B * T / ( strandClass.d * zeta ), k_B * T / ( strandClass.d * lamb )
+    kT0 = 4.09E-21
+    GammaR, GammaPsi = effectiveViscosities( sc, eta )
 
-def rDot( r, time, strandClass, force=4.8E8, inextensible=True, tangent=None,
-          jacobian=None, torques=None, params=None, flattened=True ):
-    """ Returns dr / dt
-        Shape: (L-1, 4)
-        Evolves [r_1, ..., r_L-1] components of r. r_0 is immobile.
-        Enter r in one-dimensional shape: (4 (L-1),)
-        [x1, y1, z1, psi1, ..., x_{L-1}, y_{L-1}, z_{L-1}, psi_{L-1}]
-        inextensible is true if the strand does not stretch locally."""
-    # NOTE: Force used above is actually F / kT, units: Newton / Joule == m^-1.
-    # The value 4.8E8 corresponds to 1.96 pN at T = 293 K.
-    strandClass.r = r.reshape(( strandClass.L, 4 ))
-
-    if params is None: params = parameters( strandClass )
-    cR, cPsi = params
-
-    if tangent is None: tangent = strandClass.tangent_vectors()
-
-    if jacobian is None: jacobian = strandClass.jacobian( tangent=tangent )
+    if tangent is None: tangent = sc.tangent_vectors()
+    if jacobian is None: jacobian = sc.jacobian( tangent=tangent )
     J = jacobian
 
     if torques is None:
-        dnaAngle = angular( strandClass, tangent=tangent )
+        dnaAngle = angular( sc, tangent=tangent )
         torques = dnaAngle.effectiveTorques()
-        # FIXME: direction of force should be taken into account
-        # print("{0:.1E}".format(
-        #     dnaAngle.total_energy(np.array([0., 0., 1.96E-12]))))
     tau = torques
 
-    # x = 0.0 * tau
-    # for i in range(4):
-    #    for j in range(4):
-    #        x[:,i] += J[:, j, i] * tau[:, j]
-    x = np.einsum('...ji,...j', J, tau)
+    x = np.einsum('...ji,...j', J, tau) # x_i = J_{ji} tau_j
 
-    drdt = np.zeros(( strandClass.L, 4 ))
-    drdt[1:,:3] -= cR * ( x[1:,:3] - x[:-1,:3] )
-    drdt[-1,:3] += cR * force * tangent[-1] / strandClass.d
+    drdt = np.zeros(( sc.L, 4 ))
+    drdt[1:,:3] += - GammaR * kT0 * ( x[1:,:3] - x[:-1,:3] )
+    drdt[-1,:3] += GammaR * force * ( tangent[-1] / sc.d )
 
     if inextensible:
-        tDot = np.zeros(( strandClass.L, 3 ))
+        tDot = np.zeros(( sc.L, 3 ))
         tDot[:-1] += drdt[1:,:3] - drdt[:-1,:3]
         tDot = projectPerp( tDot, normalize(tangent) )
         drdt[1:,:3] = np.cumsum( tDot[:-1], axis=0 )
 
-    drdt[1:,3] -= cPsi * tau[1:,3]
+    drdt[1:,3] += -GammaPsi * kT0 * tau[1:,3]
 
-    if flattened:
-        return drdt.flatten()
-    else:
-        return drdt
+    return drdt.flatten()
 
+def eulerMaruyamaOS(dxdt, x0, times, args, T=293.15, eta=9.22E-4 ):
+    """ Simplest implementation of an euler-maruyama integration algorithm.
+        To be used similarly to odeint. """
+    sc = args[0]
+    dt = times[1:] - times[:-1]
+
+    kT = 1.38E-23 * T
+    GammaR, GammaPsi = effectiveViscosities( sc, eta )
+
+    dW = np.random.randn( sc.L, 4 , len(dt) )
+    dW[0,...] *= 0.
+    for i in range(len(dt)):
+        dW[:,:3,i] *= np.sqrt( 1. - np.exp( -2.* GammaR * kT * dt[i] / sc.d**2 ) ) * sc.d
+        dW[:,3,i] *= np.sqrt( 1. - np.exp( -2.* GammaPsi * kT * dt[i] ) )
+
+    st = x0 # Solution at time t.
+    sol = [ st ]
+
+    for i in range( len(dt) ):
+        st += dxdt( st, times[i], *args ) * dt[i] / 2.
+
+        st += dW[...,i].flatten()
+
+        sc.r = 1.*st.reshape(( sc.L, 4 ))
+        sc.removeLocalStrech()
+        st = 1.*sc.r.flatten() 
+ 
+        st += dxdt( st, times[i], *args ) * dt[i] / 2.
+        sol.append( st )
+
+    return np.array( sol )
+
+def effectiveViscosities( strandClass, eta=9.22E-4):
+    """ Returns 1/ (d zeta) and 1 / (d lambda)"""
+    sc = strandClass
+    return ( ( np.log( sc.B / sc.rd ) / ( 2. * np.pi * eta ) ) / sc.d,
+            ( 1. / ( 2. * np.pi * eta * sc.rd**2 ) ) / sc.d )
+ 
 def makeFilename( directory, elementList, extension, dated=True ):
     """ Creates a filename in directory with a list of string elements.
         If dated, add date and time at the beginning of the filename.
