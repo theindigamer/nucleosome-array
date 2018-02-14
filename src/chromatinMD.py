@@ -26,12 +26,12 @@ class strand:
         SL is the strand length.
         psiEnd is the twist at the right edge.
         The principal class attribute is the strand r vector: r = {x,y,z,psi}."""
-    def __init__(self, L=128, B=43.E-9, C=89.E-9, SL=740.E-9, rd=1.2E-9, psiEnd=0.0,
+    def __init__(self, L=128, d=1.E-8, B=43.E-9, C=89.E-9, rd=1.2E-9, psiEnd=0.0,
                  thetaEnd=0.0, uniformlyTwisted=False):
         self.L = L
         self.B = B                # in m·kT_room
         self.C = C                # in m·kT_room
-        self.d = SL / self.L      # in m
+        self.d = d      # in m
         self.rd = rd              # hydrodynamic radius in m
         self.psiEnd = psiEnd
         self.thetaEnd = thetaEnd
@@ -187,17 +187,17 @@ def eulerMaruyamaOS(dxdt, x0, times, args, T=293.15, eta=9.22E-4 ):
     sol = [ st ]
 
     for i in range( len(dt) ):
-        st += dxdt( st, times[i], *args ) * dt[i] / 2.
+        half_times = np.arange(0., dt[i]/2., dt[i]/20.0)
+        st = odeint( dxdt, st, half_times, args=args)[-1]
 
         st += dW[...,i].flatten()
+        sc.r = st.reshape(( sc.L, 4 ))
+        sc.removeLocalStretch()
+        st = sc.r.flatten()
 
-        sc.r = 1.*st.reshape(( sc.L, 4 ))
-        sc.removeLocalStrech()
-        st = 1.*sc.r.flatten() 
- 
-        st += dxdt( st, times[i], *args ) * dt[i] / 2.
+        st = odeint( dxdt, st, half_times, args=args)[-1]
+
         sol.append( st )
-
     return np.array( sol )
 
 def effectiveViscosities( strandClass, eta=9.22E-4):
