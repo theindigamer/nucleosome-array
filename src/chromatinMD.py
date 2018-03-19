@@ -188,20 +188,15 @@ def rDotNew( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-
         [0,0,0,0,x1, y1, z1, psi1, ..., x_{L-1}, y_{L-1}, z_{L-1}, psi_{L-1}]
         inextensible is true if the strand does not stretch locally.
         Use .reshape((L,4)) in the result to have it in (L,4) shape."""
-
-# UPDATING RDOT CALCULATION.....
     sc = strandClass
     sc.r = r.reshape(( sc.L, 4 ))
-
-    GammaR, GammaPsi = effectiveViscosities( sc, eta )
 
     if tangent is None: tangent = sc.tangent_vectors()
 
     drdt = np.zeros(( sc.L, 4 ))
-    drdt[1:,:] += GammaR * elasticForces( sc, jacobian=jacobian, tangent=tangent, torques=torques)
-    drdt[-1,:3] += GammaR * force * ( tangent[-1] / sc.d )
-
-    drdt[1:,:3] += GammaR * electrostaticForces( sc )[1:,:]
+    drdt[1:,:] += elasticForces( sc, jacobian=jacobian, tangent=tangent, torques=torques)[1:,:]
+    drdt[-1,:3] += force * ( tangent[-1] / sc.d )
+    drdt[1:,:3] += electrostaticForces( sc )[1:,:]
 
     if inextensible:
         tDot = np.zeros(( sc.L, 3 ))
@@ -209,7 +204,9 @@ def rDotNew( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-
         tDot = projectPerp( tDot, normalize(tangent) )
         drdt[1:,:3] = np.cumsum( tDot[:-1], axis=0 )
 
-    drdt[1:,3] += -GammaPsi * kT0 * tau[1:,3]
+    GammaR, GammaPsi = effectiveViscosities( sc, eta )
+    drdt[:,:3] *= GammaR
+    drdt[:,3] *= GammaPsi
 
     return drdt.flatten()
 
@@ -229,7 +226,7 @@ def elasticForces( strandClass, jacobian=None, tangent=None, torques=None ):
 
     return ef
 
-def electrostaticForces( strandClass, lambD=0.8E-8, nu=8.4E9, T=293.15 ):
+def electrostaticForces( strandClass, lambD=0.8E-9, nu=8.4E9, T=293.15 ):
     """ lambD = 0.8E-9 is the Debye length at 0.14M NaCl solution. """
     kT = 1.38E-23 * T
     LB = 0.7E-9 # e^2 / ( epsilon k T_room )
