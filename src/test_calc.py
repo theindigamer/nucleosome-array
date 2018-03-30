@@ -6,8 +6,7 @@ from hypothesis import given, settings
 from hypothesis.strategies import floats, composite
 
 FINITE_FLOATS = floats(allow_nan=False, allow_infinity=False)
-ANGULAR_FLOATS = floats(
-    min_value=0., max_value=2 * np.pi, allow_nan=False, allow_infinity=False)
+ANGULAR_FLOATS = floats(min_value=0., max_value=(2 * np.pi))
 
 
 @composite
@@ -52,6 +51,18 @@ def test_eulerMatrix(f):
     assert np.allclose(m1, m2, atol=1.E-8)
 
 
+@given(_array(elements=floats(min_value=-96*np.pi, max_value=96*np.pi)))
+def test_quaternions(f):
+    euler1 = f(3)
+    quat1 = fast_calc.quaternion_of_euler1(euler1)
+    print(str(euler1))
+    euler2 = fast_calc.euler_of_quaternion1(quat1)
+    print(str(euler2))
+    m1 = fast_calc.eulerMatrixOfAngles(euler1)
+    m2 = fast_calc.eulerMatrixOfAngles(euler2)
+    assert np.allclose(m1, m2, atol=1.E-5)
+
+
 @given(_angular())
 @settings(deadline=2000)
 def test_derivative_rotation_matrices(ang):
@@ -78,7 +89,7 @@ def test_derivative_rotation_matrices(ang):
 #     assert np.allclose(tau1, tau2, atol=1.E-16)
 
 
-@given(floats(allow_nan=False, allow_infinity=False))
+@given(floats(min_value=-20., max_value=20.))
 def test_metropolis(E):
     size = 10000
     acceptance_expect = np.exp(-E) if E > 0 else 1.
