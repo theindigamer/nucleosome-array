@@ -233,13 +233,13 @@ def normalize( vector, N=1.0 ):
     return x
 
 # WORKING HERE.
-class angular(sim_utils.AngularDescription):
+class angular(sim_utils.EulerAngleDescription):
     """ This class gives the angular description of the DNA strand."""
     def __init__( self, strandClass, tangent=None ):
         temperature = sim_utils.Environment.ROOM_TEMP
         super().__init__(
-            strandClass.L, strandClass.B, strandClass.C, temperature,
-            strandClass.d * strandClass.L,
+            L=strandClass.L, B=strandClass.B, C=strandClass.C, T=temperature,
+            strand_len=strandClass.d * strandClass.L,
             euler=self.alpha( strandClass, tangent )[...,1:],
             start=strandClass.start(),
             end=strandClass.end()
