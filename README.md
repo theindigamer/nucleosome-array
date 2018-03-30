@@ -59,10 +59,14 @@ The bibliography for those references is given here for easy cross-verification.
 [B] Bancaud et al. - Structural plasticity of single chromatin fibers revealed
 by torsional manipulation
 
+[B2] Benham - Geometry and Mechanics of DNA Superhelicity
+
 [DS] Daniels and Sethna - Nucleation at the DNA Supercoiling transition
 
 [F] Forth et al. - Abrupt Buckling Transition Observed during the Plectoneme
 Formation of Individual DNA Molecules
+
+[FS] Frenkel and Smit - Understanding Molecular Simulation (Second Edition?)
 
 ## Boundary conditions
 
