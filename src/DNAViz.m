@@ -32,6 +32,7 @@ nucleosome cores (for the energy calculation) by supplying the fakeRodAngles arg
 The DNA is visualized as a tube, the radius can be altered; by default it is set to 10 \[Angstrom],
 which is the correct physical value.
 ";
+quaternionToEuler::usage = "Convert a quaternion to Euler angles.";
 
 Begin["Private`"]
 
@@ -91,7 +92,7 @@ axesWithAngles[scale_,origin_,angles_,mode_:"Active",opt___] :=
   axesGraphics[scale,origin,passiveEulerMatrix[angles],mode,opt]
 
 (* left-handed helix starting at (r0,0,0) and going downwards (initially) and up *)
-helix[\[Zeta]_] := {r0val Cos[\[Zeta]],-r0val Sin[\[Zeta]],z0val \[Zeta]/(2\[Pi])}
+helix[\[Zeta]_] := {r0val Cos[\[Zeta]], -r0val Sin[\[Zeta]], z0val \[Zeta]/(2\[Pi])}
 tangentNormalOfHelix[\[Zeta]_] := {
   {-r0val Sin[\[Zeta]], -r0val Cos[\[Zeta]], z0val/(2\[Pi])}/Sqrt[r0val^2+z0val^2/(4\[Pi]^2)]
   , {-Cos[\[Zeta]], Sin[\[Zeta]], 0}
@@ -210,6 +211,18 @@ Module[{
   mainStrand = tubes["coords"/.data];
 
   Flatten[{"graphics"/.data, normalArrows, mainStrand, endArrow}]
+]
+
+quaternionToEuler[{q0_, q1_, q2_, q3_}] := Module[
+  {\[Theta] = N@ArcCos[1. - 2.(q1^2 + q2^2)], \[Psi], \[Phi]},
+  {\[Phi], \[Psi]} = If[(\[Theta] <= 10^-5) || (\[Theta] >= \[Pi] - 10^-5)
+    , {0., N@ArcSin[2.(q0 q3 - q2 q1)]}
+    , {
+      N@ArcTan[q0 q1 - q2 q3, q1 q3 + q0 q2]
+      , N@ArcTan[q0 q1 + q2 q3,q1 q3 - q0 q2]
+      }
+    ];
+  {\[Phi], \[Theta], \[Psi]}
 ]
 
 EndPackage[]
