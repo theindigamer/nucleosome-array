@@ -3,10 +3,10 @@ from numba import jit
 import xarray as xr
 from copy import copy
 
-
 #-------------------#
 # Data manipulation #
 #-------------------#
+
 
 def _scale(arr, last=0.):
     """Linearly rescale data to give a fixed value for the last element."""
@@ -15,6 +15,7 @@ def _scale(arr, last=0.):
     for x in range(1, L):
         a[..., x] = a[..., x] - x * a[..., -1] / (L - 1) + last / (L - 1)
     return a
+
 
 def generate_rw_2d(d, B, count, L, last=0.):
     u"""Generates random walks in 2D with the right boundary conditions.
@@ -35,6 +36,7 @@ def generate_rw_2d(d, B, count, L, last=0.):
     theta = np.cumsum(beta, axis=1)
     # Last angle might be non-zero now, so we fix that with linear scaling.
     return _scale(theta, last=last)
+
 
 def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
     """Generates random walks in 3D with the right boundary conditions.
@@ -68,10 +70,11 @@ def generate_rw_3d(d, B, count, L, C=None, final_psi=None):
         psi = np.zeros((count, L))
     else:
         psi = generate_rw_2d(
-            d, C, count, L , last=(0. if final_psi is None else final_psi))
+            d, C, count, L, last=(0. if final_psi is None else final_psi))
     # the value of phi doesn't affect the energy
     phi = 2. * np.pi * np.random.rand(count, L)
     return np.moveaxis(np.array([phi, theta, psi]), 0, 2)
+
 
 def autocorr_fft(arr):
     L = arr.shape[-2]
@@ -82,7 +85,7 @@ def autocorr_fft(arr):
     tmpk = np.fft.rfft(tangents, axis=-2)
     corr = np.fft.irfft(tmpk * tmpk.conj(), axis=-2)
     # needs additional normalization after summing
-    return np.sum(corr, axis=-1)/L
+    return np.sum(corr, axis=-1) / L
 
 
 @jit(cache=True, nopython=True)
@@ -122,8 +125,9 @@ def bend_angles(arr, axis=-1, n_axis=-2):
             beta[..., :-1] = arr[..., 1:, 1] - arr[..., :-1, 1]
             return beta
         else:
-            raise ValueError("Code assumes that last axis is 'angle_str' and the"
-                             " penultimate axis is 'n'.")
+            raise ValueError(
+                "Code assumes that last axis is 'angle_str' and the"
+                " penultimate axis is 'n'.")
     else:
         lengths = arr.shape[:-2]
         tangents = np.empty_like(arr)
@@ -165,18 +169,19 @@ def bend_autocorr(arr, axis=None, n_axis=None, method="fft"):
 
 
 def compute_bend_autocorr(dataset, method="fft"):
-    return (dataset["angles"].copy()
-            .reduce(bend_autocorr, dim="angle_str",
-                    n_axis=dataset["angles"].get_axis_num('n'), method=method)
-            .rename("bend_autocorr"))
+    return (dataset["angles"].copy().reduce(
+        bend_autocorr,
+        dim="angle_str",
+        n_axis=dataset["angles"].get_axis_num('n'),
+        method=method).rename("bend_autocorr"))
 
 
 def add_bend_autocorr(dataset, method="fft"):
     da = compute_bend_autocorr(dataset, method=method)
-    da2 = (dataset["angles"].copy()
-           .reduce(bend_angles, dim="angle_str",
-                   n_axis=dataset["angles"].get_axis_num('n'))
-           .rename("bend_angle"))
+    da2 = (dataset["angles"].copy().reduce(
+        bend_angles,
+        dim="angle_str",
+        n_axis=dataset["angles"].get_axis_num('n')).rename("bend_angle"))
     ds = xr.merge([dataset, da, da2])
     # For some reason, the merge function destroys attributes.
     # See https://github.com/pydata/xarray/issues/1614 and links therein.
@@ -185,7 +190,10 @@ def add_bend_autocorr(dataset, method="fft"):
     return ds
 
 
-def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
+def concat_datasets(datasets,
+                    concat_data_vars,
+                    new_dims,
+                    new_coords,
                     concat_attrs=[]):
     """Concatentate multiple datasets by adding new dimensions.
 
@@ -219,10 +227,11 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
           the latter may give unexpected results.
     """
     if len(new_dims) != len(new_coords):
-        raise ValueError("The number of dimensions should be equal to the"
-                         " number of coordinate lists. This mismatch might have"
-                         " happened if you forgot to wrap new_dims or"
-                         " new_coords in a list.")
+        raise ValueError(
+            "The number of dimensions should be equal to the"
+            " number of coordinate lists. This mismatch might have"
+            " happened if you forgot to wrap new_dims or"
+            " new_coords in a list.")
     lengths = tuple(map(len, new_coords))
 
     # Some data variables and attributes are shared across datasets, so these
@@ -248,7 +257,8 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
             coords.update({new_dims[0]: new_coords[0]})
             attrs = {k: datasets[0].attrs[k] for k in common_attrs}
             for k in concat_data_vars:
-                data_array = xr.concat([ds.data_vars[k] for ds in datasets], new_dims[0])
+                data_array = xr.concat([ds.data_vars[k]
+                                        for ds in datasets], new_dims[0])
                 data_vars.update({k: data_array})
             for k in concat_attrs:
                 attr = np.concatenate([ds.attrs[k] for ds in datasets])
@@ -267,16 +277,110 @@ def concat_datasets(datasets, concat_data_vars, new_dims, new_coords,
 # Simulation utility functions #
 #------------------------------#
 
+
 @jit(cache=True, nopython=True)
-def unit_tangent_vector1(euler):
-    t = np.empty(3)
+def random_unit_quaternions(count):
+    a = np.random.randn(count, 4)
+    b = np.empty((count, 4))
+    for i in range(len(a)):
+        ai_norm = np.linalg.norm(a[i])
+        b[i] = a[i] / ai_norm
+    return b
+
+
+@jit(cache=True, nopython=True)
+def set_quaternion_of_euler(euler, res):
+    """
+
+    Note:
+        Represents [FS, Eqn (3.3.5)]
+    """
+    phi, theta, psi = euler
+    # tmp_phi = phi if phi != -0. else 0.
+    # tmp_theta = theta if theta != -0. else 0.
+    # tmp_psi = psi if psi != -0. else 0.
+    res[0] = np.cos(theta / 2.) * np.cos((phi + psi) / 2.)
+    res[1] = np.sin(theta / 2.) * np.cos((phi - psi) / 2.)
+    res[2] = np.sin(theta / 2.) * np.sin((phi - psi) / 2.)
+    res[3] = np.cos(theta / 2.) * np.sin((phi + psi) / 2.)
+    # res[0] = np.cos(tmp_theta / 2.) * np.cos((tmp_phi + tmp_psi) / 2.)
+    # res[1] = np.sin(tmp_theta / 2.) * np.cos((tmp_phi - tmp_psi) / 2.)
+    # res[2] = np.sin(tmp_theta / 2.) * np.sin((tmp_phi - tmp_psi) / 2.)
+    # res[3] = np.cos(tmp_theta / 2.) * np.sin((tmp_phi + tmp_psi) / 2.)
+
+
+@jit(cache=True, nopython=True)
+def quaternions_of_euler(euler):
+    """
+
+    Note:
+        Represents [FS, Eqn (3.3.5)]
+    """
+    n = len(euler)
+    quats = np.empty((n, 4))
+    for i in range(n):
+        set_quaternion_of_euler(euler[i], quats[i])
+    return quats
+
+
+@jit(cache=True, nopython=True)
+def quaternion_of_euler1(euler):
+    """
+
+    Note:
+        Represents [FS, Eqn (3.3.5)]
+    """
+    quat = np.empty(4)
+    set_quaternion_of_euler(euler, quat)
+    return quat
+
+
+@jit(cache=True, nopython=True)
+def set_euler_of_quaternion(quat, res):
+    q0, q1, q2, q3 = quat
+    res[1] = np.arccos(1. - 2. * (q1**2 + q2**2))
+    # singularity if (q1 ~ 0 and q2 ~ 0) or (q0 ~ 0 and q3 ~ 0)
+    if res[1] <= 1E-5 or res[1] >= np.pi - 1E-5:
+        res[0] = 0.
+        res[2] = np.arcsin(2 * (q0 * q3 - q2 * q1))
+        return
+    res[0] = np.arctan2(q1 * q3 + q0 * q2, q0 * q1 - q2 * q3)
+    res[2] = np.arctan2(q1 * q3 - q0 * q2, q0 * q1 + q2 * q3)
+
+
+@jit(cache=True, nopython=True)
+def euler_of_quaternion1(quat):
+    euler = np.empty(3)
+    set_euler_of_quaternion(quat, euler)
+    return euler
+
+
+@jit(cache=True, nopython=True)
+def euler_of_quaternions(quat):
+    n = len(quat)
+    euler = np.empty((n, 3))
+    for i in range(n):
+        set_euler_of_quaternion(quat[i], euler[i])
+    return euler
+
+
+@jit(cache=True, nopython=True)
+def set_unit_tangent_vector(euler, res):
     phi = euler[0]
     theta = euler[1]
     sin_theta = np.sin(theta)
-    t[0] = sin_theta * np.sin(phi)
-    t[1] = sin_theta * np.cos(phi)
-    t[2] = np.cos(theta)
-    return t
+    res[0] = sin_theta * np.sin(phi)
+    res[1] = sin_theta * np.cos(phi)
+    res[2] = np.cos(theta)
+
+
+@jit(cache=True, nopython=True)
+def set_unit_tangent_vector_q(quat, res):
+    # t = np.empty(3)
+    q0, q1, q2, q3 = quat
+    res[0] = 2. * (q1 * q3 + q0 * q2)
+    res[1] = -2. * (q2 * q3 - q0 * q1)
+    res[2] = q0**2 - q1**2 - q2**2 + q3**2
 
 
 @jit(cache=True, nopython=True)
@@ -284,12 +388,16 @@ def unit_tangent_vectors(euler):
     n = len(euler)
     t = np.empty((n, 3))
     for i in range(n):
-        phi = euler[i, 0]
-        theta = euler[i, 1]
-        sin_theta = np.sin(theta)
-        t[i, 0] = sin_theta * np.sin(phi)
-        t[i, 1] = sin_theta * np.cos(phi)
-        t[i, 2] = np.cos(theta)
+        set_unit_tangent_vector(euler[i], t[i])
+    return t
+
+
+@jit(cache=True, nopython=True)
+def unit_tangent_vectors_q(quats):
+    n = len(quats)
+    t = np.empty((n, 3))
+    for i in range(n):
+        set_unit_tangent_vector_q(quats[i], t[i])
     return t
 
 
@@ -298,27 +406,25 @@ def metropolis(reject, deltaE, even=True):
     """Updates reject in-place using the Metropolis algorithm.
 
     Args:
-        reject (Array[(x,); bool]):
+        reject (Array[(n,); bool]):
             Array to be modified in-place. If even is True, it is assumed that
             reject has True at even indices and similarly when even is False.
-        deltaE (Array[(x,)]):
-            Local energy changes used to check for rejection. Energy should be
-            in units of kT.
+        deltaE (Array[(n,)]):
+            Local energy changes used to check for rejection.
+            Energy should be in units of kT.
         even (bool): Indicates if even/odd indices of deltaE should be checked.
 
     Returns:
         None
-
-    Note:
-        The x in the sizes indicates that the two array sizes have to be equal.
-        For example, you will have x = L - 1 when the two rods at the end have
-        fixed orientation.
     """
     for i in range(0 if even else 1, reject.size, 2):
         if deltaE[i] < 0:
             reject[i] = False
         elif deltaE[i] < 16 and np.exp(-deltaE[i]) > np.random.rand():
             reject[i] = False
+        else:
+            if reject[i] != True:
+                raise ValueError("Unexpected false value.")
 
 
 @jit(cache=True, nopython=True)
@@ -348,8 +454,8 @@ def twist_bend_angles(Deltas, squared):
         Gamma_sq = np.empty(n)
         for i in range(n):
             beta_sq[i] = 2.0 * (1.0 - Deltas[i, 2, 2])
-            Gamma_sq[i] = (1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1]
-                           + Deltas[i, 2, 2])
+            Gamma_sq[i] = (
+                1.0 - Deltas[i, 0, 0] - Deltas[i, 1, 1] + Deltas[i, 2, 2])
         return (beta_sq, beta_sq, Gamma_sq)
     else:
         beta_1 = np.empty(n)
@@ -358,7 +464,7 @@ def twist_bend_angles(Deltas, squared):
         for i in range(n):
             beta_1[i] = (Deltas[i, 1, 2] - Deltas[i, 2, 1]) / 2.0
             beta_2[i] = (Deltas[i, 2, 0] - Deltas[i, 0, 2]) / 2.0
-            Gamma[i]  = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
+            Gamma[i] = (Deltas[i, 0, 1] - Deltas[i, 1, 0]) / 2.0
         return (beta_1, beta_2, Gamma)
 
 
@@ -375,7 +481,7 @@ def rotation_matrix(angles):
     Note:
         Represents [DS, Eqn. (B1, B2)].
     """
-    tmp = np.empty((3,3))
+    tmp = np.empty((3, 3))
     set_rotation_matrix(angles, tmp)
     return tmp
 
@@ -394,13 +500,11 @@ def set_rotation_matrix(angles, res):
     Note:
         Represents [DS, Eqn. (B1, B2)].
     """
-    phi = angles[0]
+    phi, theta, psi = angles
     cos_phi = np.cos(phi)
     sin_phi = np.sin(phi)
-    theta = angles[1]
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
-    psi = angles[2]
     cos_psi = np.cos(psi)
     sin_psi = np.sin(psi)
 
@@ -415,6 +519,38 @@ def set_rotation_matrix(angles, res):
     res[2, 0] = sin_theta * sin_psi
     res[2, 1] = -cos_psi * sin_theta
     res[2, 2] = cos_theta
+
+
+@jit(cache=True, nopython=True)
+def set_rotation_matrix_q(quat, res):
+    """Computes a single rotation matrix using a quaternion.
+    Args:
+        quat (Array[(4,)]): Quaternion.
+        res (Array[(3,3)]): result array to save rotation matrix.
+
+    Returns:
+        None. res is mutated in-place.
+
+    Note:
+        Represents [FS, Eqn (3.3.6)].
+        The [0, 1], [1, 0], [1, 2] and [2, 1] elements have an additional
+        minus sign compared to Frenkel's book to be consistent with our
+        definition in ``set_rotation_matrix``.
+    """
+    q0, q1, q2, q3 = quat
+
+    res[0, 0] = q0**2 + q1**2 - q2**2 - q3**2
+    res[0, 1] = -2. * (q1 * q2 - q0 * q3)
+    res[0, 2] = 2. * (q1 * q3 + q0 * q2)
+
+    res[1, 0] = -2. * (q1 * q2 + q0 * q3)
+    res[1, 1] = q0**2 - q1**2 + q2**2 - q3**2
+    res[1, 2] = -2. * (q2 * q3 - q0 * q1)
+
+    res[2, 0] = 2. * (q1 * q3 - q0 * q2)
+    res[2, 1] = -2. * (q2 * q3 + q0 * q1)
+    res[2, 2] = q0**2 - q1**2 - q2**2 + q3**2
+
 
 @jit(cache=True, nopython=True)
 def rotation_matrices(start, euler, end):
@@ -439,6 +575,17 @@ def rotation_matrices(start, euler, end):
     set_rotation_matrix(end, R[n + 1])
     return R
 
+
+def rotation_matrices_q(start_q, quats, end_q):
+    n = len(quats)
+    R = np.empty((n + 2, 3, 3))
+    set_rotation_matrix_q(start_q, R[0])
+    for i in range(n):
+        set_rotation_matrix_q(quats[i], R[i + 1])
+    set_rotation_matrix_q(end_q, R[n + 1])
+    return R
+
+
 def partition(n_parts, total):
     arr = np.array([total // n_parts] * n_parts if total >= n_parts else [])
     rem = total % n_parts
@@ -446,9 +593,11 @@ def partition(n_parts, total):
         return np.append(arr, rem)
     return arr
 
+
 def smart_arange(start, stop, step, incl=True):
     s = step if (stop - start) * step > 0 else -step
     return np.arange(start, stop + (s if incl else 0.0), s)
+
 
 def twist_steps(default_step_size, twists):
     try:
@@ -467,27 +616,32 @@ def twist_steps(default_step_size, twists):
         else:
             return np.array(twists, dtype=float)
 
-_r_0 = 4.18    # in nm, for central line of DNA wrapped around nucleosome
-_z_0 = 2.39    # pitch of superhelix in nm
-_n_wrap = 1.65 # number of times DNA winds around nucleosome
+
+_r_0 = 4.18  # in nm, for central line of DNA wrapped around nucleosome
+_z_0 = 2.39  # pitch of superhelix in nm
+_n_wrap = 1.65  # number of times DNA winds around nucleosome
 _zeta_max = 2. * np.pi * _n_wrap
 _helix_entry_tilt = np.arctan2(-2. * np.pi * _r_0, _z_0)
+
 # called lambda in the notes
+
 
 def normalize(v):
     norm_v = np.linalg.norm(v)
     assert norm_v > 0.
-    return v/norm_v
+    return v / norm_v
+
 
 # Final normal, tangent and binormal vectors
 _n_f = np.array([-np.cos(_zeta_max), np.sin(_zeta_max), 0.])
-_t_f = normalize(np.array([
-    -_r_0 * np.sin(_zeta_max),
-    -_r_0 * np.cos(_zeta_max),
-     _z_0 / (2.*np.pi)
-]))
+_t_f = normalize(
+    np.array([
+        -_r_0 * np.sin(_zeta_max), -_r_0 * np.cos(_zeta_max), _z_0 / (
+            2. * np.pi)
+    ]))
 _b_f = np.cross(_t_f, _n_f)
 _nf_tf_matrix = np.array([_n_f, _b_f, _t_f])
+
 
 @jit(cache=True, nopython=True)
 def axialRotMatrix(theta, axis=2):
@@ -517,6 +671,7 @@ def axialRotMatrix(theta, axis=2):
         ))
     return rot
 
+
 @jit(cache=True, nopython=True)
 def anglesOfEulerMatrix(m):
     """Returns an array of angles in the order phi, theta, psi.
@@ -536,12 +691,14 @@ def anglesOfEulerMatrix(m):
         ])
     return l
 
+
 @jit(cache=True, nopython=True)
 def _multiplyMatrices3(m1, m2, m3):
     """Multiplies the given matrices from left to right."""
     # using np.dot as Numba 0.35.0 doesn't support np.matmul (@ operator).
     # See https://github.com/numba/numba/issues/2101
     return np.dot(np.dot(m1, m2), m3)
+
 
 @jit(cache=True, nopython=True)
 def eulerMatrixOfAngles(angles):
@@ -552,39 +709,42 @@ def eulerMatrixOfAngles(angles):
     """
     return _multiplyMatrices3(
         axialRotMatrix(angles[0], axis=2),
-        axialRotMatrix(angles[1], axis=0),
-        axialRotMatrix(angles[2], axis=2)
-    )
+        axialRotMatrix(angles[1], axis=0), axialRotMatrix(angles[2], axis=2))
+
 
 @jit(cache=True, nopython=True)
 def _AmatrixFromMatrix(entryMatrix):
     # Numba 0.35.0 supports .transpose() but not np.transpose().
     return _multiplyMatrices3(
         axialRotMatrix(_helix_entry_tilt, 0),
-        axialRotMatrix(np.pi, 2),
-        entryMatrix.transpose()
-    )
+        axialRotMatrix(np.pi, 2), entryMatrix.transpose())
     # TODO:
     # I don't understand why the last transpose is needed.
     # According to the Mathematica code, it shouldn't be needed.
 
+
 @jit(cache=True, nopython=True)
 def _AmatrixFromAngles(entryangles):
     return _AmatrixFromMatrix(eulerMatrixOfAngles(entryangles))
+
 
 # angles given in order phi, theta, psi
 @jit(cache=True, nopython=True)
 def exitMatrix(entryangles):
     return (np.dot(_nf_tf_matrix, _AmatrixFromAngles(entryangles))).transpose()
 
+
 @jit(cache=True, nopython=True)
 def exitAngles(entryangles):
     return anglesOfEulerMatrix(exitMatrix(entryangles))
 
+
 @jit(cache=True, nopython=True)
 def calc_deltas(deltas, nucs, Rs):
     for i in nucs:
-        deltas[i] = _multiplyMatrices3(_nf_tf_matrix, _AmatrixFromMatrix(Rs[i-1]), Rs[i])
+        deltas[i] = _multiplyMatrices3(_nf_tf_matrix,
+                                       _AmatrixFromMatrix(Rs[i - 1]), Rs[i])
+
 
 @jit(cache=True, nopython=True)
 def md_jacobian(tangent):
@@ -620,6 +780,7 @@ def md_jacobian(tangent):
         J[i, 3, 2] = 0.
         J[i, 3, 3] = 0.
     return J
+
 
 @jit(cache=True, nopython=True)
 def md_derivative_rotation_matrices(euler):
@@ -673,19 +834,20 @@ def md_derivative_rotation_matrices(euler):
         DR[i, 2, 2, 2] = 0.
     return DR
 
+
 @jit(cache=True, nopython=True)
 def md_effective_torques(RStart, Rs, REnd, DRs, L, C, B, d):
     tau = np.zeros((L, 4))
-    c1 = - (C + 2. * B) / (2. * d)
-    c2 = - C / (2. * d)
+    c1 = -(C + 2. * B) / (2. * d)
+    c2 = -C / (2. * d)
     for i in range(3):
         for j in range(3):
             for k in range(3):
                 c = c1 if k == 2 else c2
-                tau[0, i + 1] += (c * (RStart[j, k] + Rs[1, j, k])
-                                  * DRs[0, j, k, i])
-                tau[-1, i + 1] += (c * (Rs[-2, j, k] + REnd[j, k])
-                                   * DRs[-1, j, k, i])
-                tau[1:-1, i + 1] += (c * (Rs[:-2, j, k] + Rs[2:, j, k])
-                                     * DRs[1:-1, j, k, i])
+                tau[0, i + 1] += (c * (
+                    RStart[j, k] + Rs[1, j, k]) * DRs[0, j, k, i])
+                tau[-1, i + 1] += (c * (
+                    Rs[-2, j, k] + REnd[j, k]) * DRs[-1, j, k, i])
+                tau[1:-1, i + 1] += (c * (
+                    Rs[:-2, j, k] + Rs[2:, j, k]) * DRs[1:-1, j, k, i])
     return tau
