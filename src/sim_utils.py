@@ -1,6 +1,21 @@
 import numpy as np
 import fast_calc
+from abc import ABC, abstractmethod
 
+OVERRIDE_ERR_MSG = "Forgot to override this method?"
+
+def check_shape_and_save(obj, attr_name, x, default):
+    if x is None:
+        setattr(obj, attr_name, default)
+    else:
+        x_shape = np.shape(x)
+        def_shape = np.shape(default)
+        if x_shape != def_shape:
+            raise ValueError("Unexpected shape. Supplied shape is {0},"
+                             " whereas shape {1} was expected.",
+                             x_shape, def_shape)
+        else:
+            setattr(obj, attr_name, x)
 
 class Environment:
     """Describes the environment of the DNA/nucleosome array.
@@ -10,20 +25,29 @@ class Environment:
     ROOM_TEMP = 296.65 # in Kelvin. This value is used in [F, page 2] when
                        # measuring B and C.
     MIN_TEMP = 1E-10   # in Kelvin
+
+    __slots__ = ("T")
+
     def __init__(self, T=ROOM_TEMP):
         self.T = T
 
+class StrandDescription(ABC):
+    """A generic strand.
 
-class AngularDescription:
-    """A barebones description of the angular properties of a strand.
+    Methods that should be provided by subclasses for calculations are:
 
-    This class provides several basic functions to work with angular properties.
-    Methods should be overriden for specific purposes, such as measuring
-    intermediate results. For example, the Monte Carlo simulation overrides
-    some functions to record timings for individual computations.
+    1. ``rotation_matrices``
+    2. ``unit_tangent_vectors``
+
+    Additional methods that you may wish to provide for diagnostics are:
+
+    1. ``total_twist``
+    2. ``total_writhe``
+
     """
+    __slots__ = ("L", "B", "C", "T", "strand_len", "d", "env")
 
-    def __init__(self, L, B, C, T, strand_len, euler=None, start=None, end=None):
+    def __init__(self, L=None, B=None, C=None, T=None, strand_len=None):
         u"""Initialize the angular description of a strand.
 
         Args:
@@ -32,55 +56,50 @@ class AngularDescription:
             C (float): twisting modulus
             T (float): temperature in Kelvin
             strand_len (float): total length of strand
-            euler (Array[(L, 3)]): Euler angles for all the rods.
-            start (Array[(3,)]): Euler angles at the start of the (-1)-th rod.
-            end (Array[(3,)]): Euler angles at the end of the final rod.
 
         Note:
+            Keywords arguments are provided for convenience; "physically right"
+            values are not automatically set by this routine.
+
             If B and C are specified in units of z·kT where T is the
             simulation temperature, and z is the unit used for the strand length
-            (usually nm), the force, should be specified in pN.
+            (usually nm), the force should be specified in pN.
 
             If B and C are specified in some other units, for example, if
-            B/strand_len is in Joules, then you should write a custom
+            B/strand_len is in Joules, then you MUST write a custom
             stretch_energy_density function which appropriately adjusts the
             prefactor for force computation.
 
-            The key point is to make sure that all the functions in the
-            total_energy_density functions have the same units.
+            The key point is to make sure that all the functions use in the
+            ``total_energy_density`` function have the same units.
         """
         self.L = L
         self.B = B
         self.C = C
         self.env = Environment(T=T)
-        self.strand_len = strand_len
-        self.d = strand_len / L
+        self.strand_len = float(strand_len)
+        self.d = self.strand_len / L
 
-        def check_shape_and_save(attr_name, x, default):
-            nonlocal self
-            if x is None:
-                setattr(self, attr_name, default)
-            else:
-                x_shape = np.shape(x)
-                def_shape = np.shape(default)
-                if x_shape != def_shape:
-                    raise ValueError("Unexpected shape. Supplied shape is {0},"
-                                     " whereas shape {1} was expected.",
-                                     x_shape, def_shape)
-                else:
-                    setattr(self, attr_name, x)
+    @abstractmethod
+    def unit_tangent_vectors(self):
+        """Unit tangent vectors for each rod (Array[(L, 3)])."""
+        raise NotImplementedError(OVERRIDE_ERR_MSG)
 
-        check_shape_and_save("euler", euler, np.zeros((self.L, 3)))
-        check_shape_and_save("start", start, np.zeros(3))
-        check_shape_and_save("end", end, np.zeros(3))
+    def tangent_vectors(self):
+        """Tangent vectors for each rod (Array[(L, 3)]) scaled with rod length.
 
+        See also: ``unit_tangent_vectors``.
+        """
+        return self.d * self.unit_tangent_vectors()
+
+    @abstractmethod
     def rotation_matrices(self):
         """Rotation matrices along the DNA string.
 
         Returns:
-            Rotation matrices for start + euler + end (L+2, 3, 3).
+            Rotation matrices for start + rods + end (Array[(L+2, 3, 3)]).
         """
-        return fast_calc.rotation_matrices(self.start, self.euler, self.end)
+        raise NotImplementedError(OVERRIDE_ERR_MSG)
 
     def delta_matrices(self, Rs=None):
         u"""Returns Δ matrices describing bends and twists for each hinge.
@@ -111,6 +130,7 @@ class AngularDescription:
         return fast_calc.twist_bend_angles(Deltas, True)
 
     def _total(self, f, *args, energy_density=None, **kwargs):
+        """For internal use only."""
         if energy_density is None:
             energy_density = f(*args, **kwargs)
         if type(energy_density) is tuple:
@@ -157,17 +177,6 @@ class AngularDescription:
 
     def twist_energy(self, *args, **kwargs):
         return self._total(self.twist_energy_density, *args, **kwargs)
-
-    def unit_tangent_vectors(self):
-        """Unit tangent vectors for each rod (Array[(L, 3)])."""
-        return fast_calc.unit_tangent_vectors(self.euler)
-
-    def tangent_vectors(self):
-        """Tangent vectors for each rod (Array[(L, 3)]) scaled with rod length.
-
-        Also see ``unit_tangent_vectors``.
-        """
-        return self.d * fast_calc.unit_tangent_vectors(self.euler)
 
     def position_vectors(self, tangents=None):
         """Position vectors for each rod (Array[(L, 3)]) scaled with rod length.
@@ -270,3 +279,114 @@ class AngularDescription:
 
     def total_energy(self, *args, **kwargs):
         return self._total(self.total_energy_density, *args, **kwargs)
+
+    # The next two methods aren't marked with @abstractmethod as implementing
+    # them is optional.
+
+    def total_twist(self):
+        raise NotImplementedError(OVERRIDE_ERR_MSG)
+
+    def total_writhe(self):
+        """Computes the writhe for the strand.
+
+        Returns:
+            Total writhe for the strand (float)
+        """
+        raise NotImplementedError(OVERRIDE_ERR_MSG)
+
+    def total_linking_number(self):
+        return self.total_twist() + self.total_writhe()
+
+class EulerAngleDescription(StrandDescription):
+    """A barebones description of the angular properties of a strand.
+
+    This class provides several basic functions to work with angular properties.
+    Methods should be overriden for specific purposes, such as measuring
+    intermediate results. For example, the Monte Carlo simulation overrides
+    some functions to record timings for individual computations.
+    """
+
+    __slots__ = ("start", "euler", "end")
+
+    def __init__(self, *args, start=None, euler=None, end=None, **kwargs):
+        u"""Initialize the angular description of a strand.
+
+        Args:
+            *args: Passed to ``StrandDescription``.
+            euler (Array[(L, 3)]): Euler angles for all the rods.
+            start (Array[(3,)]): Euler angles at the start of the (-1)-th rod.
+            end (Array[(3,)]): Euler angles at the end of the final rod.
+            **kwargs: Passed to ``StrandDescription``.
+
+        Note:
+            Default values for the angles are set by this function.
+
+            See ``StrandDescription``'s docstring for units of B and C and
+            handling of default values for other kwargs.
+        """
+        super().__init__(*args, **kwargs)
+
+        check_shape_and_save(self, "start", start, np.zeros(3))
+        check_shape_and_save(self, "euler", euler, np.zeros((self.L, 3)))
+        check_shape_and_save(self, "end"  , end  , np.zeros(3))
+
+    def rotation_matrices(self):
+        return fast_calc.rotation_matrices(self.start, self.euler, self.end)
+
+    def unit_tangent_vectors(self):
+        return fast_calc.unit_tangent_vectors(self.euler)
+
+    def total_twist(self):
+        return (self.end[2] - self.start[2]) / (2 * np.pi)
+
+    def total_writhe(self):
+        """Computes the writhe using Euler angles.
+
+        We use the formula given in equation 3, [B2].
+        """
+        def calculate_dot(angles, euler_index):
+            tmp = np.empty_like(angles)
+            tmp[0] = angles[0] - self.start[euler_index]
+            tmp[1:-1] = angles[1:] - angles[:-1]
+            tmp[-1] = self.end[euler_index] - angles[-1]
+            return tmp
+
+        phi = self.euler[:, 0]
+        phidot = calculate_dot(phi, 0)
+        theta = self.euler[:, 1]
+        thetadot = calculate_dot(theta, 1)
+        k = 2 * np.pi / self.strand_len
+        s = self.d * np.arange(self.L)
+        Omega = ((phidot * np.sin(theta) * np.cos(theta) * np.cos(k * s - phi)
+                  - k * np.cos(theta) - thetadot * np.sin(k * s - phi))
+                 / (1 - np.sin(theta) * np.cos(k * s - phi)))
+        Wr = 1.0 / (2 * np.pi) * self.strand_len * np.sum(Omega)
+        return Wr
+
+class QuaternionDescription(StrandDescription):
+
+    __slots__ = ("start_quat", "quats", "end_quat")
+
+    def __init__(self, *args, start=None, euler=None, end=None, **kwargs):
+        """See StrandDescription's __init__ method for details.
+
+        Uses quaternions instead of Euler angles to compute rotation matrices.
+        """
+        super().__init__(*args, **kwargs)
+        check_shape_and_save(
+            self, "start_quat", start, fast_calc.quaternion_of_euler1(np.zeros(3)))
+        check_shape_and_save(
+            self, "quats", euler,
+            fast_calc.quaternion_of_euler(np.zeros((self.L, 3))))
+        check_shape_and_save(
+            self, "end_quat", end, fast_calc.quaternion_of_euler1(np.zeros(3)))
+
+    def rotation_matrices(self):
+        return fast_calc.rotation_matrices_q(
+            self.start_quat, self.quats, self.end_quat)
+
+    def unit_tangent_vectors(self):
+        return fast_calc.unit_tangent_vectors_q(self.quats)
+
+    def tangent_vectors(self):
+        return self.d * fast_calc.unit_tangent_vectors_q(self.quats)
