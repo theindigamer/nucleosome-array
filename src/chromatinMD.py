@@ -29,14 +29,13 @@ class strand:
         SL is the strand length.
         psiEnd is the twist at the right edge.
         The principal class attribute is the strand r vector: r = {x,y,z,psi}."""
-    def __init__(self, L=128, d=1.E-8, B=43.E-9, C=89.E-9, rd=1.2E-9, DL=3.E-9,
-                 psiEnd=0.0, thetaEnd=0.0, uniformlyTwisted=False):
+    def __init__(self, L=128, d=1.E-8, B=43.E-9, C=89.E-9, rd=1.2E-9, psiEnd=0.0,
+            thetaEnd=0.0, uniformlyTwisted=False):
         self.L = L
         self.B = B                # in m·kT_room
         self.C = C                # in m·kT_room
         self.d = d      # in m
         self.rd = rd              # hydrodynamic radius in m
-        self.debyeL = DL # Debye length
         self.psiEnd = psiEnd
         self.thetaEnd = thetaEnd
         self.r = np.zeros(( self.L, 4 ))
@@ -137,7 +136,7 @@ class strand:
         t = normalize( tangent, self.d )
         self.r[1:, :3] = np.cumsum( t, axis=0 )[:-1]
 
-def rDot( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
+def rDotOld( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
             tangent=None, jacobian=None, torques=None ):
     """ Returns dr / dt at zero temperature.
         Shape: (L, 4).
@@ -179,7 +178,7 @@ def rDot( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
 
     return drdt.flatten()
 
-def rDotNew( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
+def rDot( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-4,
             tangent=None, jacobian=None, torques=None ):
     """ Returns dr / dt at zero temperature.
         Shape: (L, 4).
@@ -196,7 +195,7 @@ def rDotNew( r, time, strandClass, force=1.96E-12, inextensible=True, eta=9.22E-
     drdt = np.zeros(( sc.L, 4 ))
     drdt[1:,:] += elasticForces( sc, jacobian=jacobian, tangent=tangent, torques=torques)[1:,:]
     drdt[-1,:3] += force * ( tangent[-1] / sc.d )
-    drdt[1:,:3] += electrostaticForces( sc )[1:,:]
+#    drdt[1:,:3] += electrostaticForces( sc )[1:,:]
 
     if inextensible:
         tDot = np.zeros(( sc.L, 3 ))
@@ -244,6 +243,25 @@ def electrostaticForces( strandClass, lambD=0.8E-9, nu=8.4E9, T=293.15 ):
         for j in range(sc.L):
             force[:,i] += aux[:,j] * rdiff[:,j,i]
     return kT * nu**2 * LB * sc.d * force / lambD
+
+def simpleEuler(dxdt, x0, times, args ):
+    """ Simplest implementation of an euler integration algorithm.
+        To be used similarly to odeint. """
+    sc = args[0]
+    dt = times[1:] - times[:-1]
+
+    st = x0 # Solution at time t.
+    sol = [ st ]
+
+    for i in range( len(dt) ):
+        st += dxdt( st, times[i], *args ) * dt[i] 
+
+        sc.r = st.reshape(( sc.L, 4 ))
+        sc.removeLocalStretch()
+        st = sc.r.flatten()
+
+        sol.append( st )
+    return np.array( sol )
 
 def eulerMaruyamaOS(dxdt, x0, times, args, T=293.15, eta=9.22E-4 ):
     """ Simplest implementation of an euler-maruyama integration algorithm.
