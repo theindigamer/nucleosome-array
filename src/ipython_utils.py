@@ -10,6 +10,7 @@ plt.rc('font', **font)
 import seaborn as sns
 import numpy as np
 from numpy import log10, sqrt
+from sim_utils import Environment
 import pandas as pd
 import scipy
 from scipy.optimize import curve_fit
@@ -92,7 +93,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
         flag = False
         results = tmp
     results = fast_calc.concat_datasets(
-        results, ["angles", "extension", "energy", "acceptance", "timing"],
+        results, dnaMC.Evolution.RUN_DEPENDENT_PARAMS,
         ["run"], [np.arange(runs)])
 
     results.attrs.update({"seed": _seed})
@@ -103,7 +104,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
         return results
 
 def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
-                T=dnaMC.Environment.ROOM_TEMP, force=0.,
+                T=Environment.ROOM_TEMP, force=0.,
                 kickSizes=[[0., 0.1, 0.], [0., 0.3, 0.], [0., 0.5, 0.]],
                 B=43.0):
     results = []
@@ -126,10 +127,14 @@ def relax_rods(runs=10, **kwargs):
 
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
-                  T=0., kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
-                  dnaClass=dnaMC.NakedDNA):
+                  T=Environment.ROOM_TEMP,
+                  kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
+                  dnaClass=dnaMC.NakedDNA, strand_len=740.):
     """Twisting a DNA with one end."""
-    dna = dnaClass(L=L, T=T, kickSize=kickSize)
+    B = dnaMC.NakedDNA.B_ROOM_TEMP * T / Environment.ROOM_TEMP
+    C = dnaMC.NakedDNA.C_ROOM_TEMP * T / Environment.ROOM_TEMP
+    dna = dnaClass(L=L, T=T, kickSize=kickSize, strand_len=strand_len
+                   , B=B, C=C)
     twists = step_size * np.arange(1, n + 1, 1)
     result = dna.torsion_protocol(
         twists=twists, mcSteps=mcSteps, nsamples=nsamples)

@@ -11,8 +11,15 @@ def hat_curve(dataset):
     twists = dataset["twists"]
     tsteps = dataset["tsteps"]
     tslice = slice(0, tsteps.size, tsteps.size // twists.size)
-    z_mean, z_stdev = gu.mean_std(
-        dataset["extension"].isel(tsteps=tslice).sel(axis='z'), dim='run')
+    # FIXME: Add special case when 'run' is not present; there's only 1 run
+    try:
+        z_mean, z_stdev = gu.mean_std(
+            dataset["extension"].isel(tsteps=tslice).sel(axis='z'), dim='run')
+    except ValueError:
+        z_mean = dataset["extension"].isel(tsteps=tslice).sel(axis='z')
+        z_stdev = z_mean.copy()
+        # print(z_stdev)
+        z_stdev.values = np.zeros_like(z_stdev)
 
     def f(x):
         tmp = x.rename({"tsteps": "twists"})
