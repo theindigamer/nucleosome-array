@@ -15,7 +15,7 @@ import os
 import copy
 import datetime
 import fast_calc
-import sim_utils
+import strands
 
 matplotlib.rcParams.update({'font.size': 20})
 plt.rcParams['contour.negative_linestyle'] = 'solid'

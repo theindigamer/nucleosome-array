@@ -1,6 +1,7 @@
-import dnaMC
+import montecarlo
 import fast_calc
 import gen_utils as gu
+import environment as env
 
 font = {'family' : 'DejaVu Sans',
         'size'   : 14}
@@ -93,7 +94,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
         flag = False
         results = tmp
     results = fast_calc.concat_datasets(
-        results, dnaMC.Evolution.RUN_DEPENDENT_PARAMS,
+        results, montecarlo.Evolution.RUN_DEPENDENT_PARAMS,
         ["run"], [np.arange(runs)])
 
     results.attrs.update({"seed": _seed})
@@ -109,7 +110,7 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
                 B=43.0):
     results = []
     for ks in kickSizes:
-        dna = dnaMC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
+        dna = montecarlo.NakedDNA(L=L, T=T, kickSize=np.array(ks),
                              strand_len=rod_len * L, B=B)
         result = dna.relaxation_protocol(
             force=force, mcSteps=mcSteps, nsamples=nsamples)
@@ -128,11 +129,11 @@ def relax_rods(runs=10, **kwargs):
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   T=Environment.ROOM_TEMP,
-                  kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE,
-                  dnaClass=dnaMC.NakedDNA, strand_len=740.):
+                  kickSize=montecarlo.Simulation.DEFAULT_KICK_SIZE,
+                  dnaClass=montecarlo.NakedDNA, strand_len=740.):
     """Twisting a DNA with one end."""
-    B = dnaMC.NakedDNA.B_ROOM_TEMP * T / Environment.ROOM_TEMP
-    C = dnaMC.NakedDNA.C_ROOM_TEMP * T / Environment.ROOM_TEMP
+    B = montecarlo.NakedDNA.B_ROOM_TEMP * T / Environment.ROOM_TEMP
+    C = montecarlo.NakedDNA.C_ROOM_TEMP * T / Environment.ROOM_TEMP
     dna = dnaClass(L=L, T=T, kickSize=kickSize, strand_len=strand_len
                    , B=B, C=C)
     twists = step_size * np.arange(1, n + 1, 1)
@@ -154,7 +155,7 @@ def simulate_dna(runs=5, **kwargs):
     return run_sim(True, runs, simulate_dna1, **kwargs)
 
 
-def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
+def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=montecarlo.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
 
     Use-case: collecting better data (say for visualization) and skip the boring
@@ -184,7 +185,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=dnaMC.NakedDNA):
 
 
 # def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-#     dna = dnaMC.NucleosomeArray(L=L, nucPos=np.array(nucpos))
+#     dna = montecarlo.NucleosomeArray(L=L, nucPos=np.array(nucpos))
 #     results = dna.torsion_protocol(twists = step_size * np.arange(1, n+1, 1),
 #                                   mcSteps=mcSteps, nsamples=nsamples)
 #     return (dna, results)
@@ -197,9 +198,9 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     `protocol` should be one of 'twist', 'relax' or 'config'.
     If protocol is 'config', then `protocol_kwargs` should be empty.
     Otherwise, see the kwargs for torsionProtocol/relaxationProtocol.
-    Other arguments are explained under `dnaMC.NucleosomeArray.create`.
+    Other arguments are explained under `montecarlo.NucleosomeArray.create`.
     """
-    dna = dnaMC.NucleosomeArray.create(
+    dna = montecarlo.NucleosomeArray.create(
         nucArrayType=nucArrayType, nucleosomeCount=nucleosomeCount,
         basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
     dna.env.T = T
@@ -223,10 +224,10 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     return (dna, results)
 
 
-def simulate_diffusion1(initialFn, L=32, T=dnaMC.Environment.ROOM_TEMP,
+def simulate_diffusion1(initialFn, L=32, T=env.Environment.ROOM_TEMP,
                        height=np.pi/4, mcSteps=100, nsamples=4,
-                       dnaClass=dnaMC.NakedDNA,
-                       kickSize=dnaMC.Simulation.DEFAULT_KICK_SIZE):
+                       dnaClass=montecarlo.NakedDNA,
+                       kickSize=montecarlo.Simulation.DEFAULT_KICK_SIZE):
     """Testing for diffusion in DNA using a delta or a step profile initially.
 
     initialFn should be one of "delta" or "step".
@@ -295,7 +296,7 @@ def _compute_extension_helper(
         dnaClass=None, L=None, kickSize=None, B=None, T=None, force=None,
         pre_steps=None, extra_steps=None, nsamples=None, **opt_kwargs):
     dna = dnaClass(
-        L=L, kickSize=kickSize, B=B, T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
+        L=L, kickSize=kickSize, B=B, T=env.Environment.ROOM_TEMP, **opt_kwargs)
     _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
     ds = dna.relaxation_protocol(
         force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
@@ -330,11 +331,11 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         nsamples = 900
 
     if disordered:
-        dnaClass = dnaMC.DisorderedNakedDNA
+        dnaClass = montecarlo.DisorderedNakedDNA
         opt_kwargs = {'Pinv': Pinv}
     else:
         Pinv = 0
-        dnaClass = dnaMC.NakedDNA
+        dnaClass = montecarlo.NakedDNA
         opt_kwargs = {}
 
     dnas = []
@@ -345,7 +346,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
 
     def inner(kickSize, force):
         dna = dnaClass(L=L, kickSize=kickSize, B=B,
-                       T=dnaMC.Environment.ROOM_TEMP, **opt_kwargs)
+                       T=env.Environment.ROOM_TEMP, **opt_kwargs)
         _ = dna.relaxation_protocol(force=force, mcSteps=pre_steps, nsamples=1)
         ds = dna.relaxation_protocol(
             force=force, mcSteps=extra_steps, nsamples=nsamples, includeStart=True)
@@ -360,7 +361,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         print('\x1b[0G {0} out of {1}'.format(i, tot), end='', flush=True)
     # tmp = joblib.Parallel(n_jobs=4)(
     #     joblib.delayed(_compute_extension_helper)(
-    #         L=L, kickSize=ks, B=B, T=dnaMC.Environment.ROOM_TEMP, force=f,
+    #         L=L, kickSize=ks, B=B, T=env.Environment.ROOM_TEMP, force=f,
     #         pre_steps=pre_steps, extra_steps=extra_steps, nsamples=nsamples,
     #         dnaClass=dnaClass)
     #         # **opt_kwargs)

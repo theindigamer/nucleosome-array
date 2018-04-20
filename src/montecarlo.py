@@ -3,8 +3,63 @@ import time
 import fast_calc
 import xarray as xr
 import subject
+import strands
 
-from sim_utils import AngularDescription, Environment, QuaternionDescription
+from strands import AngularDescription, Environment, QuaternionDescription
+
+class MonteCarloSimulation(Subject):
+    __slots__ = (
+        "strand",
+        "sim", # simulation parameters which may affect the accuracy of results
+        "env", # physical environmental parameters such as force etc.
+        "obsCounter",
+        "oddMask",
+        "evenMask",
+    )
+    def __init__(self, strand, env):
+        super().__init__()
+        self.strand = strand
+        self.env = env
+        self.obsCounter = 0
+        self.oddMask = np.array([i % 2 == 1 for i in range(strand.mask_length())])
+        self.oddMask.setflags(write=False)
+        self.evenMask = np.logical_not(self.oddMask)
+        self.evenMask.setflags(write=False)
+
+    def metropolis_step(self):
+        """"""
+        moves = self.sim.kickSize * self.strand.random_unit_moves()
+
+        def per_rod_energy(E):
+            bend_E, twist_E, stretch_E = E
+            return bend_E[:-1] + bend_E[1:] + twist_E[:-1] + twist_E[1:] + stretch_E
+
+        def update_rods(even=True):
+            mask = self.evenMask if even else self.oddMask
+            nonlocal E0
+            Ei = per_rod_energy(E0)
+            self.quats += mask[:, np.newaxis] * moves
+            self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
+            Ef = per_rod_energy(self.all_energy_densities(force=force))
+            deltaE = Ef - Ei
+            reject = mask.copy()
+            if self.env.T <= Environment.MIN_TEMP:
+                reject[deltaE <= 0.] = False
+            else:
+                fast_calc.metropolis(reject, deltaE, even=even)
+            self.quats -= reject[:, np.newaxis] * moves
+            self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
+            E0 = self.all_energy_densities(force=force)
+            if acceptance:
+                accepted_frac[0] += 0.5 - np.count_nonzero(reject)/reject.size
+
+        parity = np.random.rand() > 0.5
+        update_rods(even=parity)
+        update_rods(even=(not parity))
+        if acceptance:
+            return E0, accepted_frac
+        return E0
+
 
 class Simulation:
     """Simulation parameters that can be varied."""
@@ -280,6 +335,8 @@ class NakedDNA(QuaternionDescription):
         """Computes the twist and bend angles.
 
         See ``fast_calc.twist_bend_angles`` for details. The squared argument
+dd
+dd
         is set from an attribute.
         """
         if Deltas is None:
@@ -598,31 +655,6 @@ class NakedDNA(QuaternionDescription):
         timing = {s : timers[i] for (i, s) in Simulation.timer_descr.items()}
         evol.save_timing(timing)
         return evol.to_dataset()
-
-
-class DisorderedNakedDNA(NakedDNA):
-
-    # [DS, Appendix 1] describes equations related to disorder.
-    def __init__(self, Pinv=1./300, **kwargs):
-        # The 1/300 value has no particular significance.
-        # [DS] considers values from ~1/1000 to ~1/100
-        NakedDNA.__init__(self, **kwargs)
-        self.Pinv = Pinv # inverse of P value in 1/nm
-        self.Bm = self.B / (1 - self.B * Pinv)
-        sigma_b = (Pinv * self.d) ** 0.5
-        # xi represents [dot(xi_m, n_1), dot(xi_m, n_2)], see [DS, Eqn. (E1)]
-        xi = np.random.randn(2, self.L - 1)
-        self.bend_zeros = sigma_b * xi
-        self.sim.squared = False
-
-    def bend_energy_density(self, angles=None):
-        if angles is None:
-            angles = self.twist_bend_angles()
-        energy_density = self.Bm / (2.0 * self.d) * (
-            (angles[0] - self.bend_zeros[0]) ** 2
-            + (angles[1] - self.bend_zeros[1]) ** 2
-        )
-        return energy_density, angles
 
 
 class NucleosomeArray(NakedDNA):

@@ -17,20 +17,6 @@ def check_shape_and_save(obj, attr_name, x, default):
         else:
             setattr(obj, attr_name, x)
 
-class Environment:
-    """Describes the environment of the DNA/nucleosome array.
-
-    Future properties one might include: salt/ion concentration etc.
-    """
-    ROOM_TEMP = 296.65 # in Kelvin. This value is used in [F, page 2] when
-                       # measuring B and C.
-    MIN_TEMP = 1E-10   # in Kelvin
-
-    __slots__ = ("T")
-
-    def __init__(self, T=ROOM_TEMP):
-        self.T = T
-
 class StrandDescription(ABC):
     """A generic strand.
 
@@ -45,16 +31,15 @@ class StrandDescription(ABC):
     2. ``total_writhe``
 
     """
-    __slots__ = ("L", "B", "C", "T", "strand_len", "d", "env")
+    __slots__ = ("L", "B", "C", "strand_len", "d")
 
-    def __init__(self, L=None, B=None, C=None, T=None, strand_len=None):
+    def __init__(self, L=None, B=None, C=None, strand_len=None):
         u"""Initialize the angular description of a strand.
 
         Args:
             L (int): number of rods
             B (float): bending modulus
             C (float): twisting modulus
-            T (float): temperature in Kelvin
             strand_len (float): total length of strand
 
         Note:
@@ -76,7 +61,6 @@ class StrandDescription(ABC):
         self.L = L
         self.B = B
         self.C = C
-        self.env = Environment(T=T)
         self.strand_len = float(strand_len)
         self.d = self.strand_len / L
 
@@ -188,7 +172,7 @@ class StrandDescription(ABC):
             tangents = self.tangent_vectors()
         return np.cumsum(tangents, axis=0)
 
-    def stretch_energy_density(self, force, tangents=None):
+    def stretch_energy_density(self, force, temperature, tangents=None):
         u"""Computes stretching energy for all L rods.
 
         Computes -F·t_i/(k·T) for i in [0, ..., L-1], using
@@ -196,13 +180,13 @@ class StrandDescription(ABC):
 
         Args:
             force (Array[(3,)]): Applied force in pN.
+            temperature (float): System temperature in K.
             tangents (Array[(L, 3)]): tangent vectors for each rod in nm.
 
         Returns:
             energy_density (Array[(L,)]) in units of kT.
         """
-        T = max(self.env.T, Environment.MIN_TEMP)
-        prefactor = 1.0 / (1.38E-2 * T)
+        prefactor = 1.0 / (1.38E-2 * temperature)
         if tangents is None:
             tangents = self.tangent_vectors()
         return prefactor * np.einsum('i,ji->j', -force, tangents)
@@ -210,7 +194,7 @@ class StrandDescription(ABC):
     def stretch_energy(self, *args, **kwargs):
         return self._total(self.stretch_energy_density, *args, **kwargs)
 
-    def all_energy_densities(self, force=None, tangents=None,
+    def all_energy_densities(self, force=None, temperature=None, tangents=None,
                              include=(True, True, True)):
         """Computes all the energy densities and returns them separately.
 
@@ -226,8 +210,9 @@ class StrandDescription(ABC):
             See the corresponding energy density functions for shapes.
 
         Note:
-            You must supply a force value if the last element of include is
-            set to True; it cannot be automatically inferred.
+            You must supply a force value and a temperature value if the last
+            element of include is set to True in order to calculate the
+            stretching energy; it cannot be automatically inferred.
         """
         bend_include, twist_include, stretch_include = include
         twist_bends = None
@@ -240,7 +225,8 @@ class StrandDescription(ABC):
         else:
             twist_ed = None
         if stretch_include:
-            stretch_ed = self.stretch_energy_density(force, tangents=tangents)
+            stretch_ed = self.stretch_energy_density(
+                force, temperature, tangents=tangents)
         else:
             stretch_ed = None
         return (bend_ed, twist_ed, stretch_ed)
@@ -297,7 +283,7 @@ class StrandDescription(ABC):
     def total_linking_number(self):
         return self.total_twist() + self.total_writhe()
 
-class EulerAngleDescription(StrandDescription):
+class EulerAngleDescription(StrandDescription, MonteCarloABC):
     """A barebones description of the angular properties of a strand.
 
     This class provides several basic functions to work with angular properties.
@@ -339,6 +325,12 @@ class EulerAngleDescription(StrandDescription):
     def total_twist(self):
         return (self.end[2] - self.start[2]) / (2 * np.pi)
 
+    def mask_length(self):
+        return self.L - 1
+
+    def random_unit_moves(self):
+        return np.random.normal(loc=0.0, size=(self.L - 1, 3))
+
     def total_writhe(self):
         """Computes the writhe using Euler angles.
 
@@ -363,7 +355,7 @@ class EulerAngleDescription(StrandDescription):
         Wr = 1.0 / (2 * np.pi) * self.strand_len * np.sum(Omega)
         return Wr
 
-class QuaternionDescription(StrandDescription):
+class QuaternionDescription(StrandDescription, MonteCarloABC):
 
     __slots__ = ("start_quat", "quats", "end_quat")
 
@@ -390,3 +382,9 @@ class QuaternionDescription(StrandDescription):
 
     def tangent_vectors(self):
         return self.d * fast_calc.unit_tangent_vectors_q(self.quats)
+
+    def mask_length(self):
+        return self.L
+
+    def random_unit_moves(self):
+        return fast_calc.random_unit_quaternions(self.L)

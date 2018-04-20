@@ -5,7 +5,7 @@ OVERRIDE_ERR_MSG = "Forgot to override this method?"
 
 class Observer(ABC):
     @abstractmethod
-    def notify(self, subject):
+    def notify(self, subject, **kwargs):
         """Notify the observer that a change was made."""
         raise NotImplementedError(OVERRIDE_ERR_MSG)
 
@@ -23,20 +23,20 @@ class EnergyObserver(Observer):
         self.stretchE = np.empty(num_recordings)
         self.totalE = np.empty(num_recordings)
 
-    def notify(self, dna):
-        idx = dna.tstepCounter
+    def notify(self, strand, counter=None, force=None, **kwargs):
+        idx = counter
         self.bendE[idx], self.twistE[idx], self.stretchE[idx] = (
-            dna.all_energy_densities(dna.force))
+            strand.all_energy_densities(force))
         self.totalE[idx] = (self.bendE[idx] + self.twistE[idx] + self.stretchE[idx])
 
     def collect(self):
         return self.energy
 
 class ExtensionObserver(Observer):
-    __slots__ = ("extension", "idx")
+    __slots__ = ("extension")
 
     def __init__(num_recordings):
         self.extension = np.empty(num_recordings)
 
-    def notify(self, dna):
-        self.extension[dna.tstepCounter] = dna.total_extension()
+    def notify(self, strand, counter=None):
+        self.extension[counter] = strand.total_extension()
