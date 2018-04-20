@@ -2,6 +2,7 @@ import numpy as np
 import time
 import fast_calc
 import xarray as xr
+import subject
 
 from sim_utils import AngularDescription, Environment, QuaternionDescription
 
