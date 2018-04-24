@@ -10,6 +10,8 @@ OVERRIDE_ERR_MSG = "Forgot to override this method?"
 class MetropolisABC(ABC):
     """Abstract base class for a strand that supports MC simulation."""
 
+    __slots__ = ()
+
     @abstractmethod
     def _mask_length(self):
         raise NotImplementedError(OVERRIDE_ERR_MSG)
@@ -24,14 +26,14 @@ class MetropolisABC(ABC):
         raise NotImplementedError(OVERRIDE_ERR_MSG)
 
 
-class AngularMCSim(EulerAngleDescription, MetropolisABC):
-    __slots__ = ("oddMask", "evenMask")
+class EulerAngleMCSim(EulerAngleDescription, MetropolisABC):
+    __slots__ = ("oddMask", "evenMask", "E")
 
     def _mask_length(self):
         return self.L - 1
 
     def __init__(self, *args, **kwargs):
-        EulerAngleDescription.__init__(*args, **kwargs)
+        EulerAngleDescription.__init__(self, *args, **kwargs)
         self.oddMask, self.evenMask = oddEvenMasks(self._mask_length())
 
     def set_end(self, euler1):
@@ -47,11 +49,13 @@ class QuaternionMCSim(QuaternionDescription, MetropolisABC):
         return self.L
 
     def __init__(self, *args, force=None, temperature=None, **kwargs):
-        EulerAngleDescription.__init__(*args, **kwargs)
+        QuaternionDescription.__init__(self, *args, **kwargs)
         if force is None or temperature is None:
             raise ValueError(
                 "Force and temperature are needed to compute the initial"
                 " energy when initializing the strand.")
+        if np.shape(force) != (3,):
+            raise ValueError("Force should have shape (3,).")
         self.E = self.all_energy_densities(
             force=force, temperature=temperature)
         self.oddMask, self.evenMask = oddEvenMasks(self._mask_length())
@@ -94,7 +98,7 @@ class QuaternionMCSim(QuaternionDescription, MetropolisABC):
             fast_calc.metropolis(reject, deltaE, even=even)
             self.quats -= reject[:, np.newaxis] * moves
             self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
-            self.E = self.all_energy_densities(force=force)
+            self.E = self.all_energy_densities(force=force, temperature=temperature)
             nonlocal acceptance
             if acceptance is not None:
                 acceptance += 0.5 - np.count_nonzero(reject) / reject.size
@@ -104,8 +108,8 @@ class QuaternionMCSim(QuaternionDescription, MetropolisABC):
         update_rods(even=(not parity))
         return acceptance
 
-        def set_end(self, euler1):
-            self.end_quat = fast_calc.quaternion_of_euler1(euler1)
+    def set_end(self, euler1):
+        self.end_quat = fast_calc.quaternion_of_euler1(euler1)
 
 
 def oddEvenMasks(n):

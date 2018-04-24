@@ -6,16 +6,16 @@ OVERRIDE_ERR_MSG = "Forgot to override this method?"
 
 
 def check_shape(x, default, lam=None):
-    lam = lambda x: (x if lam is None else lam(x))
+    lam_ = lambda x: (x if lam is None else lam(x))
     if x is None:
-        return lam(default)
+        return lam_(default)
     x_shape = np.shape(x)
     def_shape = np.shape(default)
     if x_shape != def_shape:
         raise ValueError("Unexpected shape. Supplied shape is {0},"
                          " whereas shape {1} was expected.", x_shape,
                          def_shape)
-    return lam(x)
+    return lam_(x)
 
 
 class StrandDescription(ABC):

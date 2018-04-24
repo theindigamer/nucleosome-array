@@ -10,7 +10,7 @@ from environment import Environment
 from strands import EulerAngleDescription, QuaternionDescription
 from mc_strands import MetropolisABC
 from subject import Subject
-import observers as obs
+import observer as obs
 
 DEFAULT_TWIST_STEP = np.pi/4.
 B_ROOM_TEMP = 43.0
