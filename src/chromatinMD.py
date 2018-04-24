@@ -14,8 +14,10 @@ import pickle
 import os
 import copy
 import datetime
+
 import fast_calc
 import strands
+import environment
 
 matplotlib.rcParams.update({'font.size': 20})
 plt.rcParams['contour.negative_linestyle'] = 'solid'
@@ -348,12 +350,13 @@ def normalize( vector, N=1.0 ):
     return x
 
 # WORKING HERE.
-class angular(sim_utils.EulerAngleDescription):
+class angular(strands.EulerAngleDescription):
     """ This class gives the angular description of the DNA strand."""
     def __init__( self, strandClass, tangent=None ):
-        temperature = sim_utils.Environment.ROOM_TEMP
+        temperature = environment.Environment.ROOM_TEMP
         super().__init__(
-            L=strandClass.L, B=strandClass.B, C=strandClass.C, T=temperature,
+            L=strandClass.L, B=strandClass.B, C=strandClass.C,
+            # T=temperature,
             strand_len=strandClass.d * strandClass.L,
             euler=self.alpha( strandClass, tangent )[...,1:],
             start=strandClass.start(),
