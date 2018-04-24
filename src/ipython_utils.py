@@ -1,8 +1,3 @@
-import montecarlo
-import fast_calc
-import gen_utils as gu
-import environment as env
-
 font = {'family' : 'DejaVu Sans',
         'size'   : 14}
 import matplotlib.pyplot as plt
@@ -11,7 +6,6 @@ plt.rc('font', **font)
 import seaborn as sns
 import numpy as np
 from numpy import log10, sqrt
-from sim_utils import Environment
 import pandas as pd
 import scipy
 from scipy.optimize import curve_fit
@@ -25,6 +19,12 @@ import pickle
 import copy
 import itertools
 import pprint
+
+import montecarlo as MC
+import fast_calc
+import gen_utils as gu
+import environment as env
+from environment import Environment
 
 #------------------#
 # Common constants #
@@ -94,7 +94,7 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
         flag = False
         results = tmp
     results = fast_calc.concat_datasets(
-        results, montecarlo.Evolution.RUN_DEPENDENT_PARAMS,
+        results, MC.Evolution.RUN_DEPENDENT_PARAMS,
         ["run"], [np.arange(runs)])
 
     results.attrs.update({"seed": _seed})
@@ -110,8 +110,9 @@ def relax_rods1(L=3, rod_len=5, mcSteps=10000, nsamples=10000,
                 B=43.0):
     results = []
     for ks in kickSizes:
-        dna = montecarlo.NakedDNA(L=L, T=T, kickSize=np.array(ks),
-                             strand_len=rod_len * L, B=B)
+        dna = MC.NakedDNA(L=L, T=T, kickSize=np.array(ks),
+                         strand_len=rod_len * L, B=B)
+        mcsim = monte
         result = dna.relaxation_protocol(
             force=force, mcSteps=mcSteps, nsamples=nsamples)
         results.append(result)
@@ -129,11 +130,11 @@ def relax_rods(runs=10, **kwargs):
 
 def simulate_dna1(n=128, L=32, mcSteps=20, step_size=np.pi/16, nsamples=1,
                   T=Environment.ROOM_TEMP,
-                  kickSize=montecarlo.Simulation.DEFAULT_KICK_SIZE,
-                  dnaClass=montecarlo.NakedDNA, strand_len=740.):
+                  kickSize=MC.Simulation.DEFAULT_KICK_SIZE,
+                  dnaClass=MC.NakedDNA, strand_len=740.):
     """Twisting a DNA with one end."""
-    B = montecarlo.NakedDNA.B_ROOM_TEMP * T / Environment.ROOM_TEMP
-    C = montecarlo.NakedDNA.C_ROOM_TEMP * T / Environment.ROOM_TEMP
+    B = MC.B_ROOM_TEMP * T / Environment.ROOM_TEMP
+    C = MC.C_ROOM_TEMP * T / Environment.ROOM_TEMP
     dna = dnaClass(L=L, T=T, kickSize=kickSize, strand_len=strand_len
                    , B=B, C=C)
     twists = step_size * np.arange(1, n + 1, 1)
@@ -155,7 +156,7 @@ def simulate_dna(runs=5, **kwargs):
     return run_sim(True, runs, simulate_dna1, **kwargs)
 
 
-def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=montecarlo.NakedDNA):
+def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=MC.NakedDNA):
     """Skips sampling for some steps initially and then does fine sampling.
 
     Use-case: collecting better data (say for visualization) and skip the boring
@@ -185,7 +186,7 @@ def simulate_dna_fine_sampling(L=32, mcSteps=100, dnaClass=montecarlo.NakedDNA):
 
 
 # def simulate_nucleosome(n=256, L=32, mcSteps=20, step_size=np.pi/32, nsamples=1, nucpos=[16]):
-#     dna = montecarlo.NucleosomeArray(L=L, nucPos=np.array(nucpos))
+#     dna = MC.NucleosomeArray(L=L, nucPos=np.array(nucpos))
 #     results = dna.torsion_protocol(twists = step_size * np.arange(1, n+1, 1),
 #                                   mcSteps=mcSteps, nsamples=nsamples)
 #     return (dna, results)
@@ -198,9 +199,9 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
     `protocol` should be one of 'twist', 'relax' or 'config'.
     If protocol is 'config', then `protocol_kwargs` should be empty.
     Otherwise, see the kwargs for torsionProtocol/relaxationProtocol.
-    Other arguments are explained under `montecarlo.NucleosomeArray.create`.
+    Other arguments are explained under `MC.NucleosomeArray.create`.
     """
-    dna = montecarlo.NucleosomeArray.create(
+    dna = MC.NucleosomeArray.create(
         nucArrayType=nucArrayType, nucleosomeCount=nucleosomeCount,
         basePairsPerRod=basePairsPerRod, linker=linker, spacer=spacer)
     dna.env.T = T
@@ -226,8 +227,8 @@ def simulate_nuc_array(protocol, T=293.15, nucArrayType="standard",
 
 def simulate_diffusion1(initialFn, L=32, T=env.Environment.ROOM_TEMP,
                        height=np.pi/4, mcSteps=100, nsamples=4,
-                       dnaClass=montecarlo.NakedDNA,
-                       kickSize=montecarlo.Simulation.DEFAULT_KICK_SIZE):
+                       dnaClass=MC.NakedDNA,
+                       kickSize=MC.Simulation.DEFAULT_KICK_SIZE):
     """Testing for diffusion in DNA using a delta or a step profile initially.
 
     initialFn should be one of "delta" or "step".
@@ -330,13 +331,9 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
         extra_steps = int(9E4)
         nsamples = 900
 
-    if disordered:
-        dnaClass = montecarlo.DisorderedNakedDNA
-        opt_kwargs = {'Pinv': Pinv}
-    else:
-        Pinv = 0
-        dnaClass = montecarlo.NakedDNA
-        opt_kwargs = {}
+    Pinv = 0
+    dnaClass = MC.NakedDNA
+    opt_kwargs = {}
 
     dnas = []
     datasets = []

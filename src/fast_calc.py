@@ -586,37 +586,6 @@ def rotation_matrices_q(start_q, quats, end_q):
     return R
 
 
-def partition(n_parts, total):
-    arr = np.array([total // n_parts] * n_parts if total >= n_parts else [])
-    rem = total % n_parts
-    if rem != 0:
-        return np.append(arr, rem)
-    return arr
-
-
-def smart_arange(start, stop, step, incl=True):
-    s = step if (stop - start) * step > 0 else -step
-    return np.arange(start, stop + (s if incl else 0.0), s)
-
-
-def twist_steps(default_step_size, twists):
-    try:
-        f = np.float(twists)
-        tmp = default_step_size if abs(default_step_size) <= abs(f) else f
-        return smart_arange(0., f, tmp)
-    except TypeError:
-        if type(twists) is tuple:
-            x = len(twists)
-            if x == 2:
-                return smart_arange(0., twists[0], twists[1])
-            elif x == 3:
-                return smart_arange(*twists)
-            else:
-                raise ValueError("The tuple must be of length 2 or 3.")
-        else:
-            return np.array(twists, dtype=float)
-
-
 _r_0 = 4.18  # in nm, for central line of DNA wrapped around nucleosome
 _z_0 = 2.39  # pitch of superhelix in nm
 _n_wrap = 1.65  # number of times DNA winds around nucleosome

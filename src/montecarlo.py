@@ -1,65 +1,60 @@
-import numpy as np
 import time
-import fast_calc
+import numpy as np
 import xarray as xr
+
+import utils
+import fast_calc
 import subject
 import strands
+from environment import Environment
+from strands import EulerAngleDescription, QuaternionDescription
+from mc_strands import MetropolisABC
+from subject import Subject
+import observers as obs
 
-from strands import AngularDescription, Environment, QuaternionDescription
+DEFAULT_TWIST_STEP = np.pi/4.
+B_ROOM_TEMP = 43.0
+C_ROOM_TEMP = 89.0
 
 class MonteCarloSimulation(Subject):
-    __slots__ = (
-        "strand",
-        "sim", # simulation parameters which may affect the accuracy of results
-        "env", # physical environmental parameters such as force etc.
-        "obsCounter",
-        "oddMask",
-        "evenMask",
-    )
-    def __init__(self, strand, env):
+
+    def __init__(self, strand, sim, env):
+        assert(issubclass(strand, MetropolisABC))
         super().__init__()
         self.strand = strand
+        self.sim = sim
         self.env = env
-        self.obsCounter = 0
-        self.oddMask = np.array([i % 2 == 1 for i in range(strand.mask_length())])
-        self.oddMask.setflags(write=False)
-        self.evenMask = np.logical_not(self.oddMask)
-        self.evenMask.setflags(write=False)
+        self.obs_counter = 0
+        self.recording = {"mc_steps" : 100}
+        # TODO: replace None with recording number here.
+        self.register("energy", obs.EnergyObserver(None))
+        self.register("extension", obs.ExtensionObserver(None))
 
-    def metropolis_step(self):
-        """"""
-        moves = self.sim.kickSize * self.strand.random_unit_moves()
+    def mc_relaxation(self):
+        """Monte Carlo relaxation using Metropolis algorithm."""
+        for _ in range(self.recording["mc_steps"]):
+            self.strand.metropolis_step(
+                self.env.force, self.env.temperature, self.sim["kick_size"])
+        self.notify_all(self.obs_counter, self.strand)
+        self.obs_counter += 1
 
-        def per_rod_energy(E):
-            bend_E, twist_E, stretch_E = E
-            return bend_E[:-1] + bend_E[1:] + twist_E[:-1] + twist_E[1:] + stretch_E
+    def torsion_simulation(self, twists=2*np.pi):
+        """Simulate a torsion protocol defined by twists.
 
-        def update_rods(even=True):
-            mask = self.evenMask if even else self.oddMask
-            nonlocal E0
-            Ei = per_rod_energy(E0)
-            self.quats += mask[:, np.newaxis] * moves
-            self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
-            Ef = per_rod_energy(self.all_energy_densities(force=force))
-            deltaE = Ef - Ei
-            reject = mask.copy()
-            if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = False
-            else:
-                fast_calc.metropolis(reject, deltaE, even=even)
-            self.quats -= reject[:, np.newaxis] * moves
-            self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
-            E0 = self.all_energy_densities(force=force)
-            if acceptance:
-                accepted_frac[0] += 0.5 - np.count_nonzero(reject)/reject.size
+        The twists argument can be described in several ways:
+        1. ``twists=stop`` will twist from 0 to stop (inclusive) with an
+        automatically chosen step size.
+        2. ``twists=(stop, step)`` will twist from 0 to stop (inclusive) with
+        step size ``step``.
+        3. ``twists=(start, stop, step)`` is self-explanatory.
+        4. If ``twists`` is a list or numpy array, it will be used directly.
 
-        parity = np.random.rand() > 0.5
-        update_rods(even=parity)
-        update_rods(even=(not parity))
-        if acceptance:
-            return E0, accepted_frac
-        return E0
-
+        **Warning**: Twisting is *absolute* not relative.
+        """
+        tmp_twists = utils.twist_steps(DEFAULT_TWIST_STEP, twists)
+        for tw in tmp_twists:
+            self.strand.set_end(np.array([0., 0., tw]))
+            self.mc_relaxation()
 
 class Simulation:
     """Simulation parameters that can be varied."""
@@ -260,10 +255,6 @@ class NakedDNA(QuaternionDescription):
     [DS, Eqn. (30)] describes the microscopic parameter Bm computed from B.
     """
 
-    DEFAULT_TWIST_STEP = np.pi/4
-    B_ROOM_TEMP = 43.0
-    C_ROOM_TEMP = 89.0
-
     def __init__(self, L=740, B=B_ROOM_TEMP, C=C_ROOM_TEMP, strand_len=740.0,
                  T=Environment.ROOM_TEMP,
                  kickSize=Simulation.DEFAULT_KICK_SIZE):
@@ -299,7 +290,7 @@ class NakedDNA(QuaternionDescription):
     # FIXME: Units of different variables should also be saved.
     def constants(self):
         return {
-            "temperature": self.env.T,
+            # "temperature": self.env.T,
             "B": self.B,
             "Pinv": self.Pinv,
             "Bm": self.Bm,
@@ -393,10 +384,10 @@ dd
             Ef = per_rod_energy(self.all_energy_densities(force=force))
             deltaE = Ef - Ei
             reject = mask.copy()
-            if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = False
-            else:
-                fast_calc.metropolis(reject, deltaE, even=even)
+            # if self.env.T <= Environment.MIN_TEMP:
+            #     reject[deltaE <= 0.] = False
+            # else:
+            fast_calc.metropolis(reject, deltaE, even=even)
             self.quats -= reject[:, np.newaxis] * moves
             self.quats /= np.linalg.norm(self.quats, axis=1)[:, np.newaxis]
             E0 = self.all_energy_densities(force=force)
@@ -478,10 +469,10 @@ dd
             # reject[j] and finally euler[j] (for φ/θ) or euler[j+1] (for ψ).
 
             reject = mask.copy()
-            if self.env.T <= Environment.MIN_TEMP:
-                reject[deltaE <= 0.] = False
-            else:
-                fast_calc.metropolis(reject, deltaE, even=reject_even)
+            # if self.env.T <= Environment.MIN_TEMP:
+            #     reject[deltaE <= 0.] = False
+            # else:
+            fast_calc.metropolis(reject, deltaE, even=reject_even)
 
             # diffstr = "{0:<5}: {1:7.4} -> {2:7.4} | {3:6} = {4:7.4}"
             # bluebold = '\033[33m\033[1m'
@@ -606,8 +597,8 @@ dd
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = fast_calc.partition(nsamples, mcSteps)
-        tmp_twists = fast_calc.twist_steps(self.DEFAULT_TWIST_STEP, twists)
+        nsteps = utils.partition(nsamples, mcSteps)
+        tmp_twists = utils.twist_steps(DEFAULT_TWIST_STEP, twists)
         force_vector = np.array([0., 0., force])
         evol = Evolution(self, nsteps, force_vector, twists=tmp_twists, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
@@ -637,7 +628,7 @@ dd
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = fast_calc.partition(nsamples, mcSteps)
+        nsteps = utils.partition(nsamples, mcSteps)
         force_vector = np.array([0., 0., force])
         evol = Evolution(self, nsteps, force_vector, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
@@ -772,7 +763,7 @@ class NucleosomeArray(NakedDNA):
         """
         start = time.clock()
         timers = self.sim.timers
-        nsteps = fast_calc.partition(nsamples, mcSteps)
+        nsteps = utils.partition(nsamples, mcSteps)
         dummyRodAngles = []
         force_vector = np.array([0., 0., force])
         evol = Evolution(self, nsteps, force_vector, initial=includeStart)

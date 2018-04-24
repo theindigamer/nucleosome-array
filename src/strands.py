@@ -4,18 +4,19 @@ from abc import ABC, abstractmethod
 
 OVERRIDE_ERR_MSG = "Forgot to override this method?"
 
-def check_shape_and_save(obj, attr_name, x, default):
+
+def check_shape(x, default, lam=None):
+    lam = lambda x: (x if lam is None else lam(x))
     if x is None:
-        setattr(obj, attr_name, default)
-    else:
-        x_shape = np.shape(x)
-        def_shape = np.shape(default)
-        if x_shape != def_shape:
-            raise ValueError("Unexpected shape. Supplied shape is {0},"
-                             " whereas shape {1} was expected.",
-                             x_shape, def_shape)
-        else:
-            setattr(obj, attr_name, x)
+        return lam(default)
+    x_shape = np.shape(x)
+    def_shape = np.shape(default)
+    if x_shape != def_shape:
+        raise ValueError("Unexpected shape. Supplied shape is {0},"
+                         " whereas shape {1} was expected.", x_shape,
+                         def_shape)
+    return lam(x)
+
 
 class StrandDescription(ABC):
     """A generic strand.
@@ -194,7 +195,10 @@ class StrandDescription(ABC):
     def stretch_energy(self, *args, **kwargs):
         return self._total(self.stretch_energy_density, *args, **kwargs)
 
-    def all_energy_densities(self, force=None, temperature=None, tangents=None,
+    def all_energy_densities(self,
+                             force=None,
+                             temperature=None,
+                             tangents=None,
                              include=(True, True, True)):
         """Computes all the energy densities and returns them separately.
 
@@ -212,7 +216,7 @@ class StrandDescription(ABC):
         Note:
             You must supply a force value and a temperature value if the last
             element of include is set to True in order to calculate the
-            stretching energy; it cannot be automatically inferred.
+            stretching energy; they cannot be automatically inferred.
         """
         bend_include, twist_include, stretch_include = include
         twist_bends = None
@@ -231,7 +235,7 @@ class StrandDescription(ABC):
             stretch_ed = None
         return (bend_ed, twist_ed, stretch_ed)
 
-    def total_energy_density(self, force, tangents=None):
+    def total_energy_density(self, force, temperature, tangents=None):
         """Computes total energy for each rod.
 
         The energy has three pieces:
@@ -260,7 +264,7 @@ class StrandDescription(ABC):
         energy_density += self.twist_energy_density(twist_bends=twist_bends)[0]
         # skip last element due to extra length
         energy_density[:-1] += self.stretch_energy_density(
-            force, tangents=tangents)
+            force, temperature, tangents=tangents)
         return energy_density
 
     def total_energy(self, *args, **kwargs):
@@ -283,7 +287,8 @@ class StrandDescription(ABC):
     def total_linking_number(self):
         return self.total_twist() + self.total_writhe()
 
-class EulerAngleDescription(StrandDescription, MonteCarloABC):
+
+class EulerAngleDescription(StrandDescription):
     """A barebones description of the angular properties of a strand.
 
     This class provides several basic functions to work with angular properties.
@@ -312,9 +317,9 @@ class EulerAngleDescription(StrandDescription, MonteCarloABC):
         """
         super().__init__(*args, **kwargs)
 
-        check_shape_and_save(self, "start", start, np.zeros(3))
-        check_shape_and_save(self, "euler", euler, np.zeros((self.L, 3)))
-        check_shape_and_save(self, "end"  , end  , np.zeros(3))
+        self.start = check_shape(start, np.zeros(3))
+        self.euler = check_shape(euler, np.zeros((self.L, 3)))
+        self.end = check_shape(end, np.zeros(3))
 
     def rotation_matrices(self):
         return fast_calc.rotation_matrices(self.start, self.euler, self.end)
@@ -325,17 +330,12 @@ class EulerAngleDescription(StrandDescription, MonteCarloABC):
     def total_twist(self):
         return (self.end[2] - self.start[2]) / (2 * np.pi)
 
-    def mask_length(self):
-        return self.L - 1
-
-    def random_unit_moves(self):
-        return np.random.normal(loc=0.0, size=(self.L - 1, 3))
-
     def total_writhe(self):
         """Computes the writhe using Euler angles.
 
         We use the formula given in equation 3, [B2].
         """
+
         def calculate_dot(angles, euler_index):
             tmp = np.empty_like(angles)
             tmp[0] = angles[0] - self.start[euler_index]
@@ -350,12 +350,13 @@ class EulerAngleDescription(StrandDescription, MonteCarloABC):
         k = 2 * np.pi / self.strand_len
         s = self.d * np.arange(self.L)
         Omega = ((phidot * np.sin(theta) * np.cos(theta) * np.cos(k * s - phi)
-                  - k * np.cos(theta) - thetadot * np.sin(k * s - phi))
-                 / (1 - np.sin(theta) * np.cos(k * s - phi)))
+                  - k * np.cos(theta) - thetadot * np.sin(k * s - phi)) /
+                 (1 - np.sin(theta) * np.cos(k * s - phi)))
         Wr = 1.0 / (2 * np.pi) * self.strand_len * np.sum(Omega)
         return Wr
 
-class QuaternionDescription(StrandDescription, MonteCarloABC):
+
+class QuaternionDescription(StrandDescription):
 
     __slots__ = ("start_quat", "quats", "end_quat")
 
@@ -365,26 +366,19 @@ class QuaternionDescription(StrandDescription, MonteCarloABC):
         Uses quaternions instead of Euler angles to compute rotation matrices.
         """
         super().__init__(*args, **kwargs)
-        check_shape_and_save(
-            self, "start_quat", start, fast_calc.quaternion_of_euler1(np.zeros(3)))
-        check_shape_and_save(
-            self, "quats", euler,
-            fast_calc.quaternion_of_euler(np.zeros((self.L, 3))))
-        check_shape_and_save(
-            self, "end_quat", end, fast_calc.quaternion_of_euler1(np.zeros(3)))
+        self.start_quat = check_shape(
+            start, np.zeros(3), lam=fast_calc.quaternion_of_euler1)
+        self.quats = check_shape(
+            euler, np.zeros((self.L, 3)), lam=fast_calc.quaternions_of_euler)
+        self.end_quat = check_shape(
+            end, np.zeros(3), lam=fast_calc.quaternion_of_euler1)
 
     def rotation_matrices(self):
-        return fast_calc.rotation_matrices_q(
-            self.start_quat, self.quats, self.end_quat)
+        return fast_calc.rotation_matrices_q(self.start_quat, self.quats,
+                                             self.end_quat)
 
     def unit_tangent_vectors(self):
         return fast_calc.unit_tangent_vectors_q(self.quats)
 
     def tangent_vectors(self):
         return self.d * fast_calc.unit_tangent_vectors_q(self.quats)
-
-    def mask_length(self):
-        return self.L
-
-    def random_unit_moves(self):
-        return fast_calc.random_unit_quaternions(self.L)
