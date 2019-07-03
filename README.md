@@ -1,10 +1,12 @@
-The latest WIP is available on the `fix-mc-boundary` branch. It has not been
-merged into `master`, as we were mid-refactoring before leaving the project.
+There are three branches you might be interested in -
 
-As such, code on `master` may be outdated (especially w.r.t. the Monte Carlo
-simulation).
+* `master` contains some extra Mathematica code + data files for
+  visualization -- these are not present in the other branches.
 
-See the `danilo` branch for latest version of the code for Molecular Dynamics.
+* `fix-mc-boundary` - It has not been
+  merged into `master`, as we were mid-refactoring before leaving the project.
+
+* `danilo` - contains latest version of code for molecular dynamics
 
 ## Dependencies
 
