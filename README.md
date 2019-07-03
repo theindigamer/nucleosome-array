@@ -9,6 +9,7 @@ include
 [`numba`][numba],
 [`seaborn`][seaborn],
 [`xarray`][xarray]
+[`joblib`](https://anaconda.org/anaconda/joblib)
 and optionally
 [`hypothesis`][hypothesis]
 and
@@ -30,6 +31,16 @@ doesn't seem to be working properly, so you should install it using `pip`.
 ```
 pip install nbstripout
 # if that doesn't work, try sudo -H pip install nbstripout
+```
+
+The source code for the Molecular Dynamics simulations requires some more
+packages:
+[`tqdm`][https://anaconda.org/conda-forge/tqdm],
+
+These can also be installed using [`conda`][conda]
+
+```
+conda install -c conda-forge tqdm
 ```
 
 Tests can be run by `cd`-ing into `src` and running `pytest`.

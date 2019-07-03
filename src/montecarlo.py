@@ -602,7 +602,7 @@ dd
         force_vector = np.array([0., 0., force])
         evol = Evolution(self, nsteps, force_vector, twists=tmp_twists, initial=includeStart)
         evol.update({"force": force, "mcSteps": mcSteps})
-        E0 = self.all_energy_densities(force_vector)
+        E0 = self.all_energy_densities(force=force_vector)
         for x in tmp_twists:
             self.end[2] = x
             self.end_quat = fast_calc.quaternion_of_euler1(self.end)

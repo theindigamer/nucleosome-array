@@ -1,4 +1,4 @@
-import gen_utils as gu
+import utils as gu
 
 import numpy as np
 import matplotlib.pyplot as plt

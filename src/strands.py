@@ -32,9 +32,14 @@ class StrandDescription(ABC):
     2. ``total_writhe``
 
     """
-    __slots__ = ("L", "B", "C", "strand_len", "d")
 
-    def __init__(self, L=None, B=None, C=None, strand_len=None):
+    # TODO(Varun): May 7 - The __slots__ field seems to create errors like
+    # TypeError: descriptor 'L for StrandDescription' objects doesn't apply
+    # to 'NakedDNA' object
+
+    # __slots__ = ("L", "B", "C", "strand_len", "d")
+
+    def __init__(self, L=None, B=None, C=None, strand_len=None, **kwargs):
         u"""Initialize the angular description of a strand.
 
         Args:
@@ -64,6 +69,8 @@ class StrandDescription(ABC):
         self.C = C
         self.strand_len = float(strand_len)
         self.d = self.strand_len / L
+        for k in kwargs:
+            print("WARNING: Ignoring keyword argument {} in StrandDescription.", k)
 
     @abstractmethod
     def unit_tangent_vectors(self):
@@ -297,7 +304,8 @@ class EulerAngleDescription(StrandDescription):
     some functions to record timings for individual computations.
     """
 
-    __slots__ = ("start", "euler", "end")
+    # TODO(Varun): See comment on slots in StrandDescription
+    # __slots__ = ("start", "euler", "end")
 
     def __init__(self, *args, start=None, euler=None, end=None, **kwargs):
         u"""Initialize the angular description of a strand.
@@ -358,7 +366,8 @@ class EulerAngleDescription(StrandDescription):
 
 class QuaternionDescription(StrandDescription):
 
-    __slots__ = ("start_quat", "quats", "end_quat")
+    # TODO(Varun): See comment on slots in StrandDescription
+    # __slots__ = ("start_quat", "quats", "end_quat")
 
     def __init__(self, *args, start=None, euler=None, end=None, **kwargs):
         """See StrandDescription's __init__ method for details.

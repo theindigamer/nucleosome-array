@@ -8,11 +8,9 @@ from hypothesis.strategies import floats, composite
 FINITE_FLOATS = floats(allow_nan=False, allow_infinity=False)
 ANGULAR_FLOATS = floats(min_value=0., max_value=(2 * np.pi))
 
-
 @composite
 def _array(draw, elements=FINITE_FLOATS):
     return (lambda n: draw(hnp.arrays(float, n, elements=elements)))
-
 
 @composite
 def _strand_r(draw):
@@ -27,7 +25,6 @@ def _strand_r(draw):
 
     return g
 
-
 @composite
 def _angular(draw):
     strand = cmd.strand()
@@ -35,7 +32,6 @@ def _angular(draw):
     t = strand.tangent_vectors()
     ang = cmd.angular(strand, tangent=t)
     return ang
-
 
 @given(_array())
 @settings(deadline=2000)
@@ -50,7 +46,6 @@ def test_eulerMatrix(f):
     m2 = fast_calc.eulerMatrixOfAngles(x2)
     assert np.allclose(m1, m2, atol=1.E-8)
 
-
 @given(_array(elements=floats(min_value=-96*np.pi, max_value=96*np.pi)))
 def test_quaternions(f):
     euler1 = f(3)
@@ -62,14 +57,12 @@ def test_quaternions(f):
     m2 = fast_calc.eulerMatrixOfAngles(euler2)
     assert np.allclose(m1, m2, atol=1.E-5)
 
-
 @given(_angular())
 @settings(deadline=2000)
 def test_derivative_rotation_matrices(ang):
     m1 = ang.derivativeRotationMatrices()
     m2 = ang.oldDerivativeRotationMatrices()
     assert np.allclose(m1, m2, atol=1.E-16)
-
 
 # FIXME: Update this test
 # @given(_strand_r())
@@ -87,7 +80,6 @@ def test_derivative_rotation_matrices(ang):
 #     tau1 = ang.oldEffectiveTorques()
 #     tau2 = ang.effectiveTorques()
 #     assert np.allclose(tau1, tau2, atol=1.E-16)
-
 
 @given(floats(min_value=-20., max_value=20.))
 def test_metropolis(E):

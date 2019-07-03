@@ -234,7 +234,10 @@ def elasticForces( strandClass, jacobian=None, tangent=None, torques=None ):
     return ef
 
 def electrostaticForces( strandClass, lambD=0.8E-9, nu=8.4E9, T=293.15 ):
-    """ lambD = 0.8E-9 is the Debye length at 0.14M NaCl solution. """
+    """ lambD = 0.8E-9 is the Debye length at 0.14M NaCl solution.
+        nu = 8.4E9 is effective charge
+        LB = Bjerrum length (physical constant but depends on temperature).
+    """
     kT = 1.38E-23 * T
     LB = 0.7E-9 # e^2 / ( epsilon k T_room )
     sc = strandClass
@@ -304,6 +307,7 @@ def eulerMaruyamaOS(dxdt, x0, times, args, T=293.15, eta=9.22E-4 ):
     return np.array( sol )
 
 def effectiveViscosities( strandClass, eta=9.22E-4):
+    # eta is water viscosity
     """ Returns 1/ (d zeta) and 1 / (d lambda)"""
     sc = strandClass
     return ( ( np.log( sc.B / sc.rd ) / ( 2. * np.pi * eta ) ) / sc.d,

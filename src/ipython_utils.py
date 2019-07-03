@@ -22,7 +22,7 @@ import pprint
 
 import montecarlo as MC
 import fast_calc
-import gen_utils as gu
+import utils as gu
 import environment as env
 from environment import Environment
 
@@ -79,13 +79,15 @@ def run_sim(parallel, runs, f, *args, n_jobs=4, seed=None, **kwargs):
     _seed = np.random.randint(1E8) if seed is None else seed
     np.random.seed(_seed)
 
-    if parallel:
-        _seeds = np.random.randint(1E8, size=runs)
-        tmp = joblib.Parallel(n_jobs=n_jobs)(
-            joblib.delayed(_wrapper)(_seeds[i], f, *args, **kwargs)
-            for i in range(runs))
-    else:
-        tmp = [f(*args, **kwargs) for _ in range(runs)]
+    # TODO(Varun): May 7 -
+    # The stack trace is ruined with joblib so commented it out for now.
+    # if parallel:
+    #     _seeds = np.random.randint(1E8, size=runs)
+    #     tmp = joblib.Parallel(n_jobs=n_jobs)(
+    #         joblib.delayed(_wrapper)(_seeds[i], f, *args, **kwargs)
+    #         for i in range(runs))
+    # else:
+    tmp = [f(*args, **kwargs) for _ in range(runs)]
 
     if isinstance(tmp[0], tuple):
         flag = True
@@ -378,7 +380,7 @@ def compute_extension1(forces=np.arange(0, 10, 1), kickSizes=[0.1, 0.3, 0.5],
     return (dnas, results)
 
 
-def compute_extension(runs=5, parallel=True, **kwargs):
+def compute_extension(runs=5, parallel=False, **kwargs):
     return run_sim(parallel, runs, compute_extension1, **kwargs)
 
 
