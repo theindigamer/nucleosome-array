@@ -1,3 +1,11 @@
+The latest WIP is available on the `fix-mc-boundary` branch. It has not been
+merged into `master`, as we were mid-refactoring before leaving the project.
+
+As such, code on `master` may be outdated (especially w.r.t. the Monte Carlo
+simulation).
+
+See the `danilo` branch for latest version of the code for Molecular Dynamics.
+
 ## Dependencies
 
 The source code for the Monte Carlo uses the `@` matrix multiplication operator,
